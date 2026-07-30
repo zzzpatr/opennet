@@ -61,6 +61,19 @@ L1 × L2 × L3
 - 整體 RTP。
 - 整體 Win rate。
 - 各 symbol 的中獎局數、中獎率、命中 pattern 數與總獎金。
+- 每種單局獎金的出現次數、全部 spins 機率、中獎時機率與 RTP 貢獻。
+- 小獎（≤ 1x bet）、中獎（> 1x 且 < 5x bet）、大獎（≥ 5x 且
+  < 10x bet）與超大獎（≥ 10x bet）的精確機率，以及中獎時的平均、
+  最低與最高獎金。GA 會在第 1 代、每 10 代及完成時輸出當下最佳
+  reels 的這份統計。
+
+大小獎門檻可在 `slot_game.py` 上方調整：
+
+```python
+SMALL_PRIZE_MAX_MULTIPLIER = 1.0
+BIG_PRIZE_MIN_MULTIPLIER = 5.0
+SUPER_BIG_PRIZE_MIN_MULTIPLIER = 10.0
+```
 
 ## Genetic Algorithm
 
@@ -79,33 +92,92 @@ MIN_WIN_RATE = 0.55
 雖然題目允許三個 reels 使用不同長度，目前先固定為相同的 12 格，以
 控制搜尋空間並簡化 crossover。
 
-### 額外限制
+### Missing symbols 搜尋模式
 
-除了原始題目的 RTP 與 Win rate 要求，目前 GA 額外要求五種 symbols
-都必須至少產生一個中獎組合。
+執行 `GA.py` 時，可以選擇是否把 missing symbols 納入 fitness：
+
+```text
+請選擇 GA 搜尋模式：
+  1. 考量 missing symbols（預設）
+  2. 不考量 missing symbols
+```
+
+模式 1 額外要求五種 symbols 都必須至少產生一個中獎組合；模式 2
+只依 Win rate 與 RTP 搜尋。兩種模式都會輸出各 symbol 的中獎局數。
 
 這項限制不是原始題目的明確要求，而是為了避免某個 symbol 雖然存在於
 reels 中，實際上卻永遠無法中獎。
 
-### 分層 Fitness
+### Fitness 模式
 
-GA 使用 lexicographic（分層）排序：
+`GA.py` 上方可切換 lexicographic（分層排序）與 weighted（加權總和）：
 
 ```python
-fitness_score = (
-    missing_winning_symbol_count,
-    win_rate_shortfall,
-    rtp_error,
+FITNESS_MODE = "lexicographic"
+```
+
+分層模式使用：
+
+```python
+FITNESS_PRIORITY = (
+    "missing_symbols",
+    "win_rate",
+    "rtp",
 )
 ```
 
-比較順序為：
+tuple 中越前面的項目優先級越高。若要讓 RTP 優先於 Win rate，可以改成：
 
-1. 優先減少無法中獎的 symbol 數量。
-2. 所有 symbols 都能中獎後，讓 Win rate 達到 `55%`。
-3. Win rate 達標後，讓 RTP 接近 `95%`。
+```python
+FITNESS_PRIORITY = (
+    "missing_symbols",
+    "rtp",
+    "win_rate",
+)
+```
 
-這種設計可避免不同限制透過人為 penalty 權重互相抵銷。
+選擇不考量 missing symbols 的模式時，程式會自動從實際排序中移除
+`"missing_symbols"`，其他項目的相對順序不變。設定必須包含
+`"win_rate"` 與 `"rtp"`，且不可包含重複或未知名稱。
+
+加權模式改為：
+
+```python
+FITNESS_MODE = "weighted"
+
+FITNESS_WEIGHTS = {
+    "missing_symbols": 0.1,
+    "win_rate": 5.0,
+    "rtp": 1.0,
+}
+```
+
+其 fitness 是各項誤差乘上權重後的總和。選擇不考量 missing symbols
+時，該項會自動從公式排除。停止條件會獨立檢查 Win rate、RTP，以及
+執行模式所要求的 missing symbols，不會只依加權總分決定是否達標。
+
+GA 每一代會將最佳解的 fitness、missing symbols、Win-rate shortfall、
+RTP error、RTP 與 Win rate 寫入：
+
+```text
+ga_results/ga_history.csv
+```
+
+GA 完整結束後，`ga_plot.py` 會讀取全部 CSV 紀錄並產生 Plotly
+互動圖：
+
+```text
+ga_results/ga_convergence.png
+ga_results/ga_metrics.png
+```
+
+圖表包含完整 run 的所有 generations，不再限制前 100 代，並使用
+Plotly 與 Kaleido 輸出為高解析度 PNG。
+繪圖實作集中在 `ga_plot.py`，也可以在已有 CSV 後單獨重新產圖：
+
+```powershell
+.\.venv\Scripts\python.exe .\ga_plot.py
+```
 
 ### GA 簡易流程
 
@@ -143,7 +215,7 @@ flowchart TD
    mutation rates，並加入隨機個體增加多樣性。
 8. 建立下一代並重複上述流程。
 
-GA 會在以下條件同時成立時提前停止：
+模式 1 會在以下條件同時成立時提前停止：
 
 ```python
 missing_winning_symbol_count == 0
@@ -151,9 +223,16 @@ win_rate >= MIN_WIN_RATE
 abs(rtp - TARGET_RTP) < 0.0001
 ```
 
+模式 2 不檢查 `missing_winning_symbol_count`，只要求 Win rate 達標且
+RTP 誤差小於 `0.0001`。
+
 ## 執行環境
 
-專案只使用 Python 標準函式庫，不需要安裝第三方套件。
+GA 圖表使用 Plotly。建立 virtual environment 後安裝依賴：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
+```
 
 可以直接使用專案的 virtual environment 執行：
 
@@ -182,6 +261,7 @@ abs(rtp - TARGET_RTP) < 0.0001
 DS-HomeWork.md  原始作業要求
 slot_game.py    Slot Game 規則、付款與精確統計
 GA.py           Genetic Algorithm reel 搜尋
+ga_plot.py      GA 收斂圖與指標變化圖
 README.md       專案設計與執行說明
 ```
 

@@ -3,3 +3,4 @@
 .uv-python/
 __pycache__/
 *.py[cod]
+ga_results/
