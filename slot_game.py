@@ -95,30 +95,71 @@ def calculate_payout(grid, matched_patterns):
     return payout_details, total_payout
 
 
-def calculate_rtp_and_win_rate(reels=REELS):
-    """枚舉所有停止位置，計算精確 RTP 與 win rate。"""
+def calculate_game_statistics(reels=REELS):
+    """枚舉所有停止位置，計算整體與各 symbol 的精確統計。"""
     total_spins = 0
     winning_spins = 0
     total_payout = 0
+    symbol_statistics = {
+        symbol: {
+            "winning_spins": 0,
+            "win_rate": 0,
+            "matched_patterns": 0,
+            "total_payout": 0,
+        }
+        for symbol in SYMBOL_MULTIPLIERS
+    }
 
     for stop_1 in range(len(reels[0])):
         for stop_2 in range(len(reels[1])):
             for stop_3 in range(len(reels[2])):
                 grid = spin(reels, [stop_1, stop_2, stop_3])
                 matched_patterns = check_win(grid)
-                _, payout = calculate_payout(grid, matched_patterns)
+                payout_details, payout = calculate_payout(
+                    grid,
+                    matched_patterns,
+                )
 
                 total_spins += 1
                 total_payout += payout
 
                 if matched_patterns:
                     winning_spins += 1
+                    symbols_won_this_spin = set()
+
+                    for _, symbol, _, pattern_payout in payout_details:
+                        symbol_statistics[symbol]["matched_patterns"] += 1
+                        symbol_statistics[symbol]["total_payout"] += (
+                            pattern_payout
+                        )
+                        symbols_won_this_spin.add(symbol)
+
+                    # 同一局同 symbol 即使命中多個 pattern，也只算一個中獎局。
+                    for symbol in symbols_won_this_spin:
+                        symbol_statistics[symbol]["winning_spins"] += 1
 
     total_bet = total_spins * BET_AMOUNT
     rtp = total_payout / total_bet
     win_rate = winning_spins / total_spins
 
-    return total_spins, winning_spins, total_payout, rtp, win_rate
+    for statistics in symbol_statistics.values():
+        statistics["win_rate"] = (
+            statistics["winning_spins"] / total_spins
+        )
+
+    return (
+        total_spins,
+        winning_spins,
+        total_payout,
+        rtp,
+        win_rate,
+        symbol_statistics,
+    )
+
+
+def calculate_rtp_and_win_rate(reels=REELS):
+    """保留原有五個回傳值，供既有程式相容使用。"""
+    return calculate_game_statistics(reels)[:5]
 
 
 if __name__ == "__main__":
@@ -170,8 +211,15 @@ if __name__ == "__main__":
     print(f"RTP：{simulation_rtp:.2%}")
     print(f"Win rate：{simulation_win_rate:.2%}")
 
-    exact_spins, exact_wins, exact_payout, exact_rtp, exact_win_rate = (
-        calculate_rtp_and_win_rate()
+    (
+        exact_spins,
+        exact_wins,
+        exact_payout,
+        exact_rtp,
+        exact_win_rate,
+        exact_symbol_statistics,
+    ) = (
+        calculate_game_statistics()
     )
 
     print("\n--- 所有停止位置的精確計算 ---")
@@ -181,3 +229,13 @@ if __name__ == "__main__":
     print(f"總獎金：{exact_payout:g}")
     print(f"RTP：{exact_rtp:.2%}")
     print(f"Win rate：{exact_win_rate:.2%}")
+
+    print("\n--- 各 symbol 中獎統計 ---")
+    for symbol, statistics in exact_symbol_statistics.items():
+        print(
+            f"Symbol {symbol}："
+            f"中獎局數={statistics['winning_spins']}，"
+            f"中獎率={statistics['win_rate']:.2%}，"
+            f"命中 pattern 數={statistics['matched_patterns']}，"
+            f"總獎金={statistics['total_payout']:g}"
+        )
