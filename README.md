@@ -1,17 +1,36 @@
 # Slot Game Reel Optimization
 
-這個專案使用 Genetic Algorithm（GA）搜尋符合指定 RTP 與 Win rate 的
-3×3 Slot Game reel configuration。
+## 摘要
 
-## 作業目標
+本作業的目標是產生一組 3×3 Slot Game reels，使遊戲的理論 RTP
+（Return to Player）接近 95%，且 Win rate 不低於 55%。
 
-- RTP（Return to Player）目標為 `95%`。
-- Win rate 不得低於 `55%`。
-- 遊戲畫面為 3 columns × 3 rows。
-- 使用 5 種 symbols：
+本專案先建立可完整枚舉停止位置的 Slot Game 計算程式，再使用 Genetic
+Algorithm（GA）搜尋龐大的 reel configuration 空間。取得符合原題要求的
+baseline 後，進一步分析 symbol winning spins 與 Jackpot，觀察到只滿足
+RTP 和 Win rate 不代表遊戲分布合理，因此再以 NSGA-II 探索 RTP 精度與
+symbol 分布之間的 Pareto trade-off。
+
+主要流程如下：
+
+```text
+建立精確遊戲模型
+→ 使用 GA 搜尋原題可行解
+→ 分析 baseline 的遊戲設計問題
+→ 使用 NSGA-II 進行多目標改善
+→ 比較改善前後結果
+```
+
+---
+
+## 1. Slot Game 模型與精確枚舉
+
+### 1.1 題目規則
+
+遊戲畫面為 3 columns × 3 rows，共有五種 symbols：
 
 ```python
-{
+SYMBOL_MULTIPLIERS = {
     0: 0.25,
     1: 0.55,
     2: 1,
@@ -20,261 +39,489 @@
 }
 ```
 
-- 前四種 winning patterns 的獎金為：
+題目定義五種 winning patterns。Pattern 4.1～4.4 的 payout 為：
 
 ```text
 Bet amount × symbol multiplier
 ```
 
-- Pattern 4.5 的獎金為：
+Pattern 4.5 要求九格皆為相同 symbol，payout 為：
 
 ```text
 Bet amount × symbol multiplier × 5
 ```
 
+同一個畫面可以同時命中多個 patterns，每個命中的 pattern 都會獨立計算
+獎金。因此九格相同時，會同時命中 4.1～4.5，總獎金為所有命中獎金的
+加總。
+
 完整題目請參考 [DS-HomeWork.md](./DS-HomeWork.md)。
 
-## 規則假設
+### 1.2 Reel 與停止位置
 
-目前實作允許同一個畫面同時命中多個 winning patterns，且每個命中的
-pattern 都會獨立計算獎金。
-
-因此，如果整個 3×3 畫面都是相同 symbol，會同時命中 patterns
-4.1、4.2、4.3、4.4 與 4.5，最終獎金為所有 pattern 獎金的總和。
-
-## 精確統計方式
-
-`slot_game.py` 會枚舉三個 reels 的所有停止位置，而不是使用隨機模擬
-估算最終結果。
-
-如果三個 reels 的長度分別為 `L1`、`L2`、`L3`，總組合數為：
+每條 reel 是一個環狀 symbol sequence。若三條 reels 的長度分別為
+`L1`、`L2`、`L3`，固定一組 reels 後，共有：
 
 ```text
 L1 × L2 × L3
 ```
 
-每個組合都會計算：
+種停止位置。
 
-- 是否中獎。
-- 命中的 winning patterns。
-- 總獎金。
-- 整體 RTP。
-- 整體 Win rate。
-- 各 symbol 的中獎局數、中獎率、命中 pattern 數與總獎金。
-- 每種單局獎金的出現次數、全部 spins 機率、中獎時機率與 RTP 貢獻。
-- 小獎（≤ 1x bet）、中獎（> 1x 且 < 5x bet）、大獎（≥ 5x 且
-  < 10x bet）與超大獎（≥ 10x bet）的精確機率，以及中獎時的平均、
-  最低與最高獎金。GA 會在第 1 代、每 10 代及完成時輸出當下最佳
-  reels 的這份統計。
+[slot_game.py](./slot_game.py) 不使用抽樣模擬估計最終結果，而是完整枚舉
+所有停止位置，因此可以得到精確的：
 
-大小獎門檻可在 `slot_game.py` 上方調整：
+- RTP
+- Win rate
+- 總 payout
+- 各 symbol winning spins
+- 各 symbol 的 payout contribution
+- 小獎、中獎、大獎與超大獎機率
+- 九格同 symbol Jackpot 次數與機率
 
-```python
-SMALL_PRIZE_MAX_MULTIPLIER = 1.0
-BIG_PRIZE_MIN_MULTIPLIER = 5.0
-SUPER_BIG_PRIZE_MIN_MULTIPLIER = 10.0
-```
-
-## Genetic Algorithm
-
-執行 [GA.py](./GA.py) 會搜尋 reel configuration。
-
-目前設定為：
+RTP 與 Win rate 分別計算為：
 
 ```python
-REEL_LENGTH = 12
-POPULATION_SIZE = 200
-GENERATIONS = 500
-TARGET_RTP = 0.95
-MIN_WIN_RATE = 0.55
+rtp = total_payout / total_bet
+win_rate = winning_spins / total_spins
 ```
 
-雖然題目允許三個 reels 使用不同長度，目前先固定為相同的 12 格，以
-控制搜尋空間並簡化 crossover。
+完整枚舉使最後交付的 reels 可以被確定性驗證，不會因為模擬次數或 random
+seed 不同而得到不同結果。
 
-### Missing symbols 搜尋模式
+---
 
-執行 `GA.py` 時，可以選擇是否把 missing symbols 納入 fitness：
+## 2. 使用 GA 搜尋 Reel Configuration
+
+### 2.1 為什麼不能直接窮舉所有 reels
+
+目前三條 reels 使用相同的固定長度 `L`，每格有 5 種 symbol。完整 reel
+configuration 空間為：
 
 ```text
-請選擇 GA 搜尋模式：
-  1. 考量 missing symbols（預設）
-  2. 不考量 missing symbols
+5^(3L)
 ```
 
-模式 1 額外要求五種 symbols 都必須至少產生一個中獎組合；模式 2
-只依 Win rate 與 RTP 搜尋。兩種模式都會輸出各 symbol 的中獎局數。
+以 `L = 12` 為例：
 
-這項限制不是原始題目的明確要求，而是為了避免某個 symbol 雖然存在於
-reels 中，實際上卻永遠無法中獎。
-
-### Fitness 模式
-
-`GA.py` 上方可切換 lexicographic（分層排序）與 weighted（加權總和）：
-
-```python
-FITNESS_MODE = "lexicographic"
+```text
+5^36 ≈ 1.46 × 10^25
 ```
 
-分層模式使用：
+雖然固定一組 reels 後可以完整枚舉停止位置，但無法再窮舉所有可能的
+reel configurations。因此本作業使用 GA 在龐大空間中快速搜尋可行解。
+
+### 2.2 Baseline GA
+
+[GA_baseline.py](./GA_baseline.py) 只處理原題明確要求：
+
+```text
+RTP 接近 95%
+Win rate ≥ 55%
+```
+
+Fitness 定義為：
 
 ```python
-FITNESS_PRIORITY = (
-    "missing_symbols",
-    "win_rate",
-    "rtp",
+weighted_error = (
+    rtp_error
+    + WIN_RATE_WEIGHT * win_rate_shortfall
 )
 ```
 
-tuple 中越前面的項目優先級越高。若要讓 RTP 優先於 Win rate，可以改成：
+其中：
 
 ```python
-FITNESS_PRIORITY = (
-    "missing_symbols",
-    "rtp",
-    "win_rate",
+rtp_error = abs(rtp - 0.95)
+win_rate_shortfall = max(0, 0.55 - win_rate)
+```
+
+Win rate 達標後，`win_rate_shortfall` 會變成 0，不會要求 Win rate
+無限制提高；GA 會將搜尋資源集中於 RTP。
+
+Baseline 的成功條件為：
+
+```python
+rtp_error <= RTP_TOLERANCE
+win_rate >= 0.55
+```
+
+Jackpot、missing symbols、symbol concentration 和獎金分布都不影響
+baseline fitness，避免將自行加入的遊戲設計偏好誤當成原題要求。
+
+---
+
+## 3. GA Operators 與收斂設計
+
+三種搜尋方法共用 [ga_common.py](./ga_common.py) 的 reel encoding、
+evaluation cache 與 genetic operators，確保實驗差異來自 fitness 或
+selection，而不是不同的 mutation 實作。
+
+### 3.1 Selection 與 elitism
+
+每一代會保留少量 elite，避免目前最佳解被 crossover 或 mutation
+破壞。其餘 parents 從族群中較佳的前半部選取。
+
+### 3.2 Single-point crossover
+
+每條 child reel 分別選擇一個切割位置，前段取自 parent A，後段取自
+parent B，使 parent 中連續的 symbol 結構可以被保留。
+
+### 3.3 Single-symbol mutation
+
+每個位置以一定機率替換成另一個 symbol，改變各 symbol 的數量並提供
+一般性的搜尋能力。
+
+### 3.4 Pair mutation
+
+除了傳統單格 mutation，本專案加入相鄰 pair mutation：
+
+```text
+[0, 2, 1, 3] → [0, 2, 2, 3]
+```
+
+題目的前四個 winning patterns 都包含 2×2 相同 symbols。要形成 2×2，
+相鄰 reels 必須分別具有相鄰相同 symbol，因此 pair mutation 比完全隨機
+的單格替換更符合題目結構，也更容易建立可能中獎的 reel segments。
+
+Reel 為環狀結構，所以最後一格與第一格也視為相鄰。
+
+### 3.5 Swap mutation
+
+Swap mutation 交換同一條 reel 的兩個位置：
+
+```text
+[0, 1, 2, 3] → [0, 3, 2, 1]
+```
+
+它不改變 symbol 數量，只改變排列與相鄰關係，適合對已經接近目標的
+symbol frequency 做局部調整。
+
+### 3.6 Missing-symbol repair
+
+Game-design GA 與 NSGA-II 共用一個 domain-specific repair operator。
+一般 mutation 完成後，若目前仍有完全不能中獎的 symbol，程式會以：
+
+```python
+MISSING_SYMBOL_REPAIR_RATE = 0.30
+```
+
+的機率挑選其中一種，並在 `(reel 0, reel 1)` 或
+`(reel 1, reel 2)` 各建立一組相鄰 pair。這會直接建立一種可對齊成
+2×2 winning pattern 的停止組合。
+
+Baseline GA 不使用這個 repair，因為所有 symbols 都能中獎不是原題
+要求。Game-design GA 與 NSGA-II 則使用完全相同的 repair 實作與機率，
+避免將 operator 差異誤認為 selection 演算法差異。
+
+### 3.7 停滯處理
+
+普通 GA 停滯時會：
+
+- 執行單格 local search
+- 暫時提高 mutation rates
+- 加入 random immigrants
+
+Local search 負責改善目前最佳解附近的鄰居；boosted mutation 與
+immigrants 則增加跳出 local optimum 的機會。
+
+### 3.8 Cache 與收斂紀錄
+
+相同 reels 可能透過 elite 或 crossover 重複出現。程式使用 immutable
+reel key 快取完整枚舉結果，避免重複計算。
+
+每一代的最佳 fitness 與 metrics 會寫入 CSV，再由
+[ga_plot.py](./ga_plot.py) 使用 Plotly 產生完整 generations 的 PNG
+收斂圖。最後一代最佳解會另外保存成 `best_solution.json`，並產生
+獎金分布與 symbol winning-spins 分布圖，方便直接放入報告。
+
+---
+
+## 4. Baseline 解的遊戲設計分析
+
+Baseline GA 的目標只是回答原題。即使 RTP 與 Win rate 達標，仍可能
+出現以下問題：
+
+1. Winning spins 集中在少數 symbols。
+2. 某些 symbols 存在於 reels，卻完全無法形成 winning pattern。
+3. Pattern 4.5 的九格 Jackpot 沒有任何可能的停止組合。
+4. 大部分 payout 集中於少數獎級，玩家體驗可能缺乏變化。
+
+### 4.1 Symbol concentration
+
+本專案使用 HHI 衡量各 symbol winning spins 的集中程度：
+
+```python
+symbol_concentration = sum(
+    (symbol_wins / total_symbol_wins) ** 2
 )
 ```
 
-選擇不考量 missing symbols 的模式時，程式會自動從實際排序中移除
-`"missing_symbols"`，其他項目的相對順序不變。設定必須包含
-`"win_rate"` 與 `"rtp"`，且不可包含重複或未知名稱。
-
-加權模式改為：
-
-```python
-FITNESS_MODE = "weighted"
-
-FITNESS_WEIGHTS = {
-    "missing_symbols": 0.1,
-    "win_rate": 5.0,
-    "rtp": 1.0,
-}
-```
-
-其 fitness 是各項誤差乘上權重後的總和。選擇不考量 missing symbols
-時，該項會自動從公式排除。停止條件會獨立檢查 Win rate、RTP，以及
-執行模式所要求的 missing symbols，不會只依加權總分決定是否達標。
-
-GA 每一代會將最佳解的 fitness、missing symbols、Win-rate shortfall、
-RTP error、RTP 與 Win rate 寫入：
+五種 symbols 完全平均時：
 
 ```text
-ga_results/ga_history.csv
+HHI = 5 × 0.2² = 0.2
 ```
 
-GA 完整結束後，`ga_plot.py` 會讀取全部 CSV 紀錄並產生 Plotly
-互動圖：
+全部集中於單一 symbol 時：
 
 ```text
-ga_results/ga_convergence.png
-ga_results/ga_metrics.png
+HHI = 1.0
 ```
 
-圖表包含完整 run 的所有 generations，不再限制前 100 代，並使用
-Plotly 與 Kaleido 輸出為高解析度 PNG。
-繪圖實作集中在 `ga_plot.py`，也可以在已有 CSV 後單獨重新產圖：
+因此 concentration 越低越平均，越高則代表中獎集中在少數 symbols。
 
-```powershell
-.\.venv\Scripts\python.exe .\ga_plot.py
+### 4.2 Jackpot
+
+本報告將命中 Pattern 4.5，也就是 3×3 九格都是相同 symbol，定義為
+Jackpot。Jackpot 是否至少存在一個停止組合不是原題的明確要求，但可作為
+遊戲設計分析指標。
+
+### 4.3 Baseline 實驗結果
+
+下表應在正式執行 `GA_baseline.py` 後填入精確結果：
+
+| 指標 | Baseline 結果 | 原題是否達標 |
+|---|---:|---|
+| RTP | 待填入 | 待確認 |
+| RTP error | 待填入 | 待確認 |
+| Win rate | 待填入 | 待確認 |
+| Symbol concentration | 待填入 | 非原題要求 |
+| Missing winning symbols | 待填入 | 非原題要求 |
+| Jackpot probability | 待填入 | 非原題要求 |
+
+各 symbol winning spins：
+
+| Symbol | Winning spins | Winning-spins share |
+|---:|---:|---:|
+| 0 | 待填入 | 待填入 |
+| 1 | 待填入 | 待填入 |
+| 2 | 待填入 | 待填入 |
+| 3 | 待填入 | 待填入 |
+| 4 | 待填入 | 待填入 |
+
+分析時應先確認 baseline 是否真的存在集中或缺少 Jackpot，再據實描述；
+不應在尚未取得結果前預設一定會發生。
+
+---
+
+## 5. 使用 NSGA-II 進行多目標改善
+
+### 5.1 為什麼使用 NSGA-II
+
+RTP 精度與 symbol 分布可能互相衝突：
+
+- 某組 reels 的 RTP 非常接近 95%，但 winning spins 高度集中。
+- 另一組 reels 的 symbols 較平均，但 RTP error 稍高。
+
+若使用普通加權 GA，必須先決定兩者的人工權重。NSGA-II 則保留多組
+non-dominated solutions，讓不同 trade-offs 形成 Pareto front。
+
+### 5.2 Hard constraints
+
+[NSGAII.py](./NSGAII.py) 將以下條件視為硬限制：
+
+```text
+RTP 落在 RTP tolerance
+Win rate ≥ 55%
+至少存在一個九格 Jackpot
+五種 symbols 都至少能產生一次 winning spin
 ```
 
-### GA 簡易流程
+Feasible solution 一定優先於 infeasible solution。尚未找到 feasible
+solution 時，程式比較正規化後的 constraint violation；搜尋尺度只控制
+不合格階段的 selection pressure，不改變合格條件本身。
 
-```mermaid
-flowchart TD
-    A[隨機建立初始族群] --> B[完整枚舉每個個體的停止位置]
-    B --> C[計算 symbol 中獎數、Win rate 與 RTP]
-    C --> D[使用分層 fitness 排序]
-    D --> E{是否符合停止條件？}
-    E -- 是 --> F[輸出最佳 reels 與精確統計]
-    E -- 否 --> G[保留 elite]
-    G --> H[從較佳的前半族群選擇 parents]
-    H --> I[單點 crossover]
-    I --> J[單格、相鄰 pair 與 swap mutation]
-    J --> K{搜尋是否停滯？}
-    K -- 否 --> B
-    K -- 是 --> L[Local search、提高 mutation 並加入隨機個體]
-    L --> B
-```
+`missing_symbols == 0` 只保證每種 symbol 至少具有一次中獎機會。
+尚未合格時，`missing_symbols / 5` 提供漸進式搜尋方向；合格後仍由
+`symbol_concentration` objective 改善 winning spins 是否過度集中。
 
-每一代的處理步驟如下：
+### 5.3 Pareto objectives
 
-1. 對 population 中的每組 reels 完整枚舉所有停止位置。
-2. 計算各 symbol 中獎局數、整體 Win rate 與 RTP。
-3. 依照分層 fitness 排序個體。
-4. 保留前 `ELITE_SIZE` 個最佳個體。
-5. 從排名較佳的前半族群選擇 parents，使用單點 crossover 產生
-   children。
-6. 對 children 執行三種 mutation：
-   - 單格 replacement：改變單一位置的 symbol。
-   - 相鄰 pair replacement：將相鄰兩格改為相同 symbol，協助形成
-     2×2 winning pattern。
-   - Swap mutation：交換兩個位置，改變排列但保留 symbol 數量。
-7. 如果連續 `STAGNATION_LIMIT` 代沒有改善，執行 local search、提高
-   mutation rates，並加入隨機個體增加多樣性。
-8. 建立下一代並重複上述流程。
-
-模式 1 會在以下條件同時成立時提前停止：
+硬條件合格後比較：
 
 ```python
-missing_winning_symbol_count == 0
-win_rate >= MIN_WIN_RATE
-abs(rtp - TARGET_RTP) < 0.0001
+objectives = (
+    rtp_error,
+    symbol_concentration,
+)
 ```
 
-模式 2 不檢查 `missing_winning_symbol_count`，只要求 Win rate 達標且
-RTP 誤差小於 `0.0001`。
+兩項 objectives 都是越小越好。若兩個解各自在一項 objective 較好，
+兩者都可能保留在 Pareto front。
 
-## 執行環境
+### 5.4 Non-dominated sorting 與 crowding distance
 
-GA 圖表使用 Plotly。建立 virtual environment 後安裝依賴：
+NSGA-II 先使用 non-dominated sorting 將族群分成多層 fronts。同一
+front 中再利用 crowding distance 保留分布較分散的 solutions，避免所有
+結果集中在 Pareto front 的單一區域。
+
+每一代會合併 parents 與 offspring，再從合併族群中選出下一代：
+
+```text
+Parents + Offspring
+→ Non-dominated sorting
+→ Crowding distance
+→ Environmental selection
+```
+
+最終完整 Pareto front 會輸出到：
+
+```text
+nsga2_results/nsga2_pareto_front.csv
+```
+
+---
+
+## 6. 優化前後比較
+
+正式報告應從 feasible Pareto front 選取一組推薦解，再與 baseline 使用
+相同的完整枚舉方式比較。
+
+| 指標 | Baseline GA | NSGA-II 推薦解 | 變化 |
+|---|---:|---:|---:|
+| RTP | 待填入 | 待填入 | 待填入 |
+| RTP error | 待填入 | 待填入 | 待填入 |
+| Win rate | 待填入 | 待填入 | 待填入 |
+| Symbol concentration | 待填入 | 待填入 | 待填入 |
+| Missing winning symbols | 待填入 | 待填入 | 待填入 |
+| Jackpot probability | 待填入 | 待填入 | 待填入 |
+
+判讀時需要注意：
+
+- NSGA-II 的改善不應以破壞原題條件為代價。
+- `feasible=0` 時的 Pareto front 仍是不合格解，不能作為最終改善成果。
+- Pareto solutions 數量代表 front 中的 individuals，不一定等於不同的
+  reel configurations，需注意重複解。
+- Symbol concentration 降低才表示 winning spins 變得更平均。
+
+如果 NSGA-II 在設定 generations 內沒有找到 feasible solution，應如實
+報告為實驗限制，不應將最小 violation 解描述成成功結果。
+
+---
+
+## 7. 結論與延伸方向
+
+### 7.1 結論
+
+本作業將搜尋問題拆成兩層：
+
+1. 對固定 reels 完整枚舉所有停止位置，得到確定性的 RTP 與 Win rate。
+2. 使用演化演算法搜尋無法直接窮舉的 reel configuration 空間。
+
+Baseline GA 負責直接回答原題，pair mutation 等 domain-specific
+operators 則利用 winning-pattern 結構提高搜尋效率。取得 baseline 後，
+額外分析 symbol concentration、Jackpot 與獎金分布，可以說明數學條件
+達標不一定等同於完整的遊戲設計品質。
+
+NSGA-II 是額外的多目標實驗，用來探索 RTP 精度與 symbol balance 的
+trade-off。對面試作業而言，Baseline GA 與精確驗證仍是主要交付；
+NSGA-II 應視為延伸，而不是完成原題的必要條件。
+
+### 7.2 Prize distribution
+
+目前程式已統計：
+
+```text
+小獎：≤1x bet
+中獎：>1x 且 <5x bet
+大獎：≥5x 且 <10x bet
+超大獎：≥10x bet
+```
+
+未來可以進一步分析各獎級的 hit probability 與 RTP contribution。若要將
+它加入 fitness，必須先定義有依據的目標分布，避免使用任意權重。
+
+### 7.3 Near-win probability
+
+Near win 可以定義為只差一格就命中某個 pattern 的畫面。它不應計入
+Win rate 或 payout，但可以作為玩家感受與遊戲節奏的分析指標。
+
+需要注意 near-win 呈現可能涉及玩家保護、公平性與法規問題，因此應將
+它用於透明的體驗分析，而不是刻意誤導玩家。
+
+### 7.4 玩家行為分析
+
+若未來取得匿名且經適當同意的實際遊玩資料，可分析：
+
+- Session length
+- Bet-size changes
+- 玩家在大獎或連敗後的離開機率
+- 不同 volatility 對留存的影響
+- Bonus 或 Jackpot 對行為的影響
+
+這類分析必須注意隱私、負責任遊戲與避免針對高風險玩家進行剝削性
+個人化。
+
+### 7.5 其他演算法方向
+
+- 使用多個 random seeds 比較成功率與穩定性。
+- 用普通 GA 的 feasible solution 初始化 NSGA-II。
+- 加入 adaptive mutation 與 immigrants 處理停滯。
+- 使用 hypervolume 評估 Pareto front 收斂程度。
+- 使用不同 reel lengths 或 virtual reels 擴大可表達的機率範圍。
+
+---
+
+## 執行方式
+
+安裝依賴：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
 ```
 
-可以直接使用專案的 virtual environment 執行：
+執行規則與精確統計：
 
 ```powershell
 .\.venv\Scripts\python.exe .\slot_game.py
 ```
 
-執行 GA：
+執行 Baseline GA：
 
 ```powershell
-.\.venv\Scripts\python.exe .\GA.py
+.\.venv\Scripts\python.exe .\GA_baseline.py
 ```
 
-如果 PowerShell 允許執行啟用指令碼，也可以先啟用環境：
+執行加入遊戲設計考量的普通 GA：
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe .\GA_game_design.py
 ```
 
-如果系統禁止執行 `Activate.ps1`，不需要修改系統設定，直接使用
-`.venv\Scripts\python.exe` 即可。
+執行 NSGA-II：
 
-## 檔案說明
-
-```text
-DS-HomeWork.md  原始作業要求
-slot_game.py    Slot Game 規則、付款與精確統計
-GA.py           Genetic Algorithm reel 搜尋
-ga_plot.py      GA 收斂圖與指標變化圖
-README.md       專案設計與執行說明
+```powershell
+.\.venv\Scripts\python.exe .\NSGAII.py
 ```
 
-## 最終結果
+普通 GA 執行完會自動產圖。也可以指定 history CSV 手動重新產圖：
 
-GA 搜尋完成後，應將最終 reels 與完整枚舉的驗證結果記錄於此：
+```powershell
+.\.venv\Scripts\python.exe .\ga_plot.py `
+    .\ga_baseline_results\ga_history.csv
+```
+
+Game-design GA：
+
+```powershell
+.\.venv\Scripts\python.exe .\ga_plot.py `
+    .\ga_game_design_results\ga_history.csv
+```
+
+舊的 `GA.py` 保留為相容入口，目前等同執行 `GA_baseline.py`。
+
+---
+
+## 專案結構
 
 ```text
-Reel 1: 尚待產生
-Reel 2: 尚待產生
-Reel 3: 尚待產生
-
-Exact RTP: 尚待驗證
-Exact Win rate: 尚待驗證
-All symbols can win: 尚待驗證
+DS-HomeWork.md    原始作業要求
+slot_game.py      Slot Game 規則、payout 與精確枚舉
+ga_common.py      共用 operators、metrics、cache 與普通 GA runner
+GA_baseline.py    只考量原題要求的 GA
+GA_game_design.py 加入 Jackpot 與 symbol concentration 的 GA
+NSGAII.py         多目標 NSGA-II 延伸實驗
+ga_plot.py        從 GA history 產生 Plotly PNG
+GA.py             Baseline GA 相容入口
 ```

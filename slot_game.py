@@ -116,6 +116,7 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
     """枚舉所有停止位置，計算整體與各 symbol 的精確統計。"""
     total_spins = 0
     winning_spins = 0
+    jackpot_spins = 0
     total_payout = 0
     payout_counts = {}
     prize_tier_counts = {
@@ -149,6 +150,8 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
 
                 if matched_patterns:
                     winning_spins += 1
+                    if "4.5" in matched_patterns:
+                        jackpot_spins += 1
                     payout_counts[payout] = payout_counts.get(payout, 0) + 1
                     prize_tier = classify_prize(payout)
                     prize_tier_counts[prize_tier] += 1
@@ -217,6 +220,8 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
         }
 
     payout_statistics = {
+        "jackpot_spins": jackpot_spins,
+        "jackpot_probability": jackpot_spins / total_spins,
         "average_winning_payout": (
             total_payout / winning_spins
             if winning_spins
@@ -296,6 +301,11 @@ def print_winning_payout_statistics(payout_statistics):
         "最低／最高單局獎金："
         f"{payout_statistics['minimum_winning_payout']:g} / "
         f"{payout_statistics['maximum_winning_payout']:g}"
+    )
+    print(
+        "Jackpot（九格同 symbol）："
+        f"{payout_statistics['jackpot_spins']} 次，"
+        f"機率={payout_statistics['jackpot_probability']:.6%}"
     )
 
 
