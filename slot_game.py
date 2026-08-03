@@ -1,7 +1,7 @@
 import random
 
 
-# 三個滾輪（reels），之後可以再調整內容與長度。
+# These are the three reels. Their symbols and lengths can be changed later.
 REELS = [
     [3, 1, 1, 0, 0, 0, 0, 0],
     [0, 0, 0, 0, 0, 4, 4, 0],
@@ -10,10 +10,9 @@ REELS = [
 
 BET_AMOUNT = 100
 
-# 依單局總獎金相對於 bet 的倍數區分獎金級距。
+# Group prizes by the total payout-to-bet multiplier for one spin.
 SMALL_PRIZE_MAX_MULTIPLIER = 1.0
 BIG_PRIZE_MIN_MULTIPLIER = 5.0
-SUPER_BIG_PRIZE_MIN_MULTIPLIER = 10.0
 
 SYMBOL_MULTIPLIERS = {
     0: 0.25,
@@ -23,8 +22,8 @@ SYMBOL_MULTIPLIERS = {
     4: 5,
 }
 
-# 每個座標都是 (row, column)。
-# 一個 pattern 內的所有位置必須是相同 symbol 才算成功。
+# Each coordinate is written as (row, column).
+# A pattern wins only when all of its positions contain the same symbol.
 WINNING_PATTERNS = {
     "4.1": [(0, 0), (0, 1), (1, 0), (1, 1)],
     "4.2": [(0, 1), (0, 2), (1, 1), (1, 2)],
@@ -39,7 +38,7 @@ WINNING_PATTERNS = {
 
 
 def spin(reels=REELS, stops=None):
-    """轉動三個滾輪，回傳 3×3 的畫面。"""
+    """Spin the three reels and return the 3x3 screen."""
     if stops is None:
         stops = [random.randrange(len(reel)) for reel in reels]
 
@@ -58,7 +57,7 @@ def spin(reels=REELS, stops=None):
 
 
 def print_grid(grid):
-    """將 3×3 畫面印出來。"""
+    """Print a 3x3 screen."""
     print("+---+---+---+")
     for row in grid:
         print("| " + " | ".join(str(symbol) for symbol in row) + " |")
@@ -66,7 +65,7 @@ def print_grid(grid):
 
 
 def check_win(grid):
-    """檢查畫面，回傳所有成功的 pattern 編號。"""
+    """Check the screen and return every matched pattern ID."""
     matched_patterns = []
 
     for pattern_name, positions in WINNING_PATTERNS.items():
@@ -80,7 +79,7 @@ def check_win(grid):
 
 
 def calculate_payout(grid, matched_patterns):
-    """計算各 pattern 的獎金，以及加總後的總獎金。"""
+    """Calculate each pattern payout and the total prize for the spin."""
     payout_details = []
     total_payout = 0
 
@@ -101,19 +100,17 @@ def calculate_payout(grid, matched_patterns):
 
 
 def classify_prize(payout):
-    """依單局總獎金相對於 bet 的倍數回傳獎金級距。"""
+    """Classify a prize by its payout-to-bet multiplier."""
     payout_multiplier = payout / BET_AMOUNT
     if payout_multiplier <= SMALL_PRIZE_MAX_MULTIPLIER:
         return "small"
     if payout_multiplier < BIG_PRIZE_MIN_MULTIPLIER:
         return "medium"
-    if payout_multiplier < SUPER_BIG_PRIZE_MIN_MULTIPLIER:
-        return "big"
-    return "super_big"
+    return "big"
 
 
 def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
-    """枚舉所有停止位置，計算整體與各 symbol 的精確統計。"""
+    """Enumerate every stop and calculate exact game and symbol statistics."""
     total_spins = 0
     winning_spins = 0
     jackpot_spins = 0
@@ -123,7 +120,6 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
         "small": 0,
         "medium": 0,
         "big": 0,
-        "super_big": 0,
     }
     symbol_statistics = {
         symbol: {
@@ -164,7 +160,7 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
                         )
                         symbols_won_this_spin.add(symbol)
 
-                    # 同一局同 symbol 即使命中多個 pattern，也只算一個中獎局。
+                    # Count a symbol once per winning spin, even if several patterns match.
                     for symbol in symbols_won_this_spin:
                         symbol_statistics[symbol]["winning_spins"] += 1
 
@@ -244,7 +240,7 @@ def calculate_game_statistics(reels=REELS, include_payout_statistics=False):
 
 
 def calculate_winning_payout_statistics(reels=REELS):
-    """回傳中獎金額分布與小、中、大獎機率。"""
+    """Return the payout distribution and small, medium, and big prize rates."""
     return calculate_game_statistics(
         reels,
         include_payout_statistics=True,
@@ -252,60 +248,55 @@ def calculate_winning_payout_statistics(reels=REELS):
 
 
 def print_winning_payout_statistics(payout_statistics):
-    """印出各中獎金額及獎金級距的精確機率。"""
-    print("\n--- 中獎金額分布 ---")
+    """Print exact probabilities for payouts and prize tiers."""
+    print("\n--- Winning payout distribution ---")
     for payout, statistics in (
         payout_statistics["payout_distribution"].items()
     ):
         print(
-            f"獎金 {payout:g}（{payout / BET_AMOUNT:g}x bet）："
-            f"出現={statistics['spin_count']} 次，"
-            f"全部 spins 機率={statistics['probability']:.2%}，"
-            f"中獎時機率="
-            f"{statistics['probability_among_wins']:.2%}，"
-            f"獎金貢獻={statistics['payout_share']:.2%}"
+            f"Prize {payout:g} ({payout / BET_AMOUNT:g}x bet): "
+            f"spins={statistics['spin_count']}, "
+            f"all-spin probability={statistics['probability']:.2%}, "
+            f"probability among wins="
+            f"{statistics['probability_among_wins']:.2%}, "
+            f"payout share={statistics['payout_share']:.2%}"
         )
 
-    print("\n--- 小／中／大／超大獎機率 ---")
+    print("\n--- Small / medium / big prize rates ---")
     tier_labels = {
         "small": (
-            f"小獎（小於等於 {SMALL_PRIZE_MAX_MULTIPLIER:g}x bet）"
+            f"Small (up to {SMALL_PRIZE_MAX_MULTIPLIER:g}x bet)"
         ),
         "medium": (
-            f"中獎（大於 {SMALL_PRIZE_MAX_MULTIPLIER:g}x "
-            f"且小於 {BIG_PRIZE_MIN_MULTIPLIER:g}x bet）"
+            f"Medium (over {SMALL_PRIZE_MAX_MULTIPLIER:g}x and "
+            f"under {BIG_PRIZE_MIN_MULTIPLIER:g}x bet)"
         ),
         "big": (
-            f"大獎（大於等於 {BIG_PRIZE_MIN_MULTIPLIER:g}x "
-            f"且小於 {SUPER_BIG_PRIZE_MIN_MULTIPLIER:g}x bet）"
-        ),
-        "super_big": (
-            "超大獎（大於等於 "
-            f"{SUPER_BIG_PRIZE_MIN_MULTIPLIER:g}x bet）"
+            f"Big ({BIG_PRIZE_MIN_MULTIPLIER:g}x bet or more)"
         ),
     }
     for tier_name, statistics in payout_statistics["prize_tiers"].items():
         print(
-            f"{tier_labels[tier_name]}："
-            f"出現={statistics['spin_count']} 次，"
-            f"全部 spins 機率={statistics['probability']:.2%}，"
-            f"中獎時機率="
+            f"{tier_labels[tier_name]}: "
+            f"spins={statistics['spin_count']}, "
+            f"all-spin probability={statistics['probability']:.2%}, "
+            f"probability among wins="
             f"{statistics['probability_among_wins']:.2%}"
         )
 
     print(
-        "中獎時平均獎金："
+        "Average payout among wins: "
         f"{payout_statistics['average_winning_payout']:g}"
     )
     print(
-        "最低／最高單局獎金："
+        "Minimum / maximum winning payout: "
         f"{payout_statistics['minimum_winning_payout']:g} / "
         f"{payout_statistics['maximum_winning_payout']:g}"
     )
     print(
-        "Jackpot（九格同 symbol）："
-        f"{payout_statistics['jackpot_spins']} 次，"
-        f"機率={payout_statistics['jackpot_probability']:.6%}"
+        "Jackpot (all nine cells match): "
+        f"{payout_statistics['jackpot_spins']} spins, "
+        f"probability={payout_statistics['jackpot_probability']:.6%}"
     )
 
 
@@ -315,7 +306,7 @@ if __name__ == "__main__":
     simulation_total_payout = 0
 
     for spin_number in range(1, simulation_spins + 1):
-        print(f"\n第 {spin_number} 次 spin")
+        print(f"\nSpin {spin_number}")
 
         result = spin()
         print_grid(result)
@@ -324,7 +315,7 @@ if __name__ == "__main__":
 
         if matched_patterns:
             simulation_wins += 1
-            print("成功！命中的 pattern：", ", ".join(matched_patterns))
+            print("Win! Matched patterns:", ", ".join(matched_patterns))
 
             payout_details, total_payout = calculate_payout(
                 result,
@@ -340,21 +331,21 @@ if __name__ == "__main__":
                     f"（symbol {symbol}）"
                 )
 
-            print(f"總獎金：{total_payout:g}")
+            print(f"Total payout: {total_payout:g}")
             simulation_total_payout += total_payout
 
         else:
-            print("失敗，本次獎金：0")
+            print("No win. Payout: 0")
 
     simulation_total_bet = simulation_spins * BET_AMOUNT
     simulation_rtp = simulation_total_payout / simulation_total_bet
     simulation_win_rate = simulation_wins / simulation_spins
 
-    print("\n--- 10 次隨機遊玩結果 ---")
-    print(f"遊玩次數：{simulation_spins}")
-    print(f"成功次數：{simulation_wins}")
-    print(f"總下注：{simulation_total_bet:g}")
-    print(f"總獎金：{simulation_total_payout:g}")
+    print("\n--- Results from 10 random spins ---")
+    print(f"Spins: {simulation_spins}")
+    print(f"Wins: {simulation_wins}")
+    print(f"Total bet: {simulation_total_bet:g}")
+    print(f"Total payout: {simulation_total_payout:g}")
     print(f"RTP：{simulation_rtp:.2%}")
     print(f"Win rate：{simulation_win_rate:.2%}")
 
@@ -370,22 +361,22 @@ if __name__ == "__main__":
         calculate_game_statistics(include_payout_statistics=True)
     )
 
-    print("\n--- 所有停止位置的精確計算 ---")
-    print(f"總組合數：{exact_spins}")
-    print(f"成功組合數：{exact_wins}")
-    print(f"總下注：{exact_spins * BET_AMOUNT:g}")
-    print(f"總獎金：{exact_payout:g}")
+    print("\n--- Exact results across every stop combination ---")
+    print(f"Total combinations: {exact_spins}")
+    print(f"Winning combinations: {exact_wins}")
+    print(f"Total bet: {exact_spins * BET_AMOUNT:g}")
+    print(f"Total payout: {exact_payout:g}")
     print(f"RTP：{exact_rtp:.2%}")
     print(f"Win rate：{exact_win_rate:.2%}")
 
-    print("\n--- 各 symbol 中獎統計 ---")
+    print("\n--- Win statistics by symbol ---")
     for symbol, statistics in exact_symbol_statistics.items():
         print(
             f"Symbol {symbol}："
-            f"中獎局數={statistics['winning_spins']}，"
-            f"中獎率={statistics['win_rate']:.2%}，"
-            f"命中 pattern 數={statistics['matched_patterns']}，"
-            f"總獎金={statistics['total_payout']:g}"
+            f"winning spins={statistics['winning_spins']}, "
+            f"win rate={statistics['win_rate']:.2%}, "
+            f"matched patterns={statistics['matched_patterns']}, "
+            f"total payout={statistics['total_payout']:g}"
         )
 
     print_winning_payout_statistics(exact_payout_statistics)

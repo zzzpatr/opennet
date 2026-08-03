@@ -49,7 +49,7 @@ def reel_key(reels):
 
 
 def create_individual():
-    """隨機建立三條固定長度 reels。"""
+    """Create three random reels with a fixed length."""
     return [
         [
             random.choice(tuple(SYMBOL_MULTIPLIERS))
@@ -60,7 +60,7 @@ def create_individual():
 
 
 def crossover(parent_a, parent_b):
-    """每條 reel 使用單點 crossover。"""
+    """Apply single-point crossover to each reel."""
     child = []
     for reel_index in range(3):
         reel_length = len(parent_a[reel_index])
@@ -78,7 +78,7 @@ def mutate(
     pair_rate=PAIR_MUTATION_RATE,
     swap_rate=SWAP_MUTATION_RATE,
 ):
-    """執行單格、相鄰 pair 與 swap mutation。"""
+    """Apply single-symbol, adjacent-pair, and swap mutations."""
     symbols = tuple(SYMBOL_MULTIPLIERS)
     for reel in reels:
         reel_length = len(reel)
@@ -109,24 +109,24 @@ def mutate(
 
 
 def calculate_symbol_concentration(reels):
-    """以各 reel 的 symbol-frequency HHI 衡量分布集中程度。"""
+    """Measure reel concentration with symbol-frequency HHI."""
     reel_concentrations = []
     symbols = tuple(SYMBOL_MULTIPLIERS)
     for reel in reels:
         reel_length = len(reel)
         if reel_length == 0:
-            raise ValueError("Reel 不可為空。")
+            raise ValueError("A reel cannot be empty.")
         reel_concentrations.append(sum(
             (reel.count(symbol) / reel_length) ** 2
             for symbol in symbols
         ))
     if not reel_concentrations:
-        raise ValueError("Reels 不可為空。")
+        raise ValueError("The reels list cannot be empty.")
     return sum(reel_concentrations) / len(reel_concentrations)
 
 
 def evaluate_metrics(reels):
-    """完整枚舉 reels，回傳所有演算法共用的精確指標。"""
+    """Fully enumerate the reels and return the shared exact metrics."""
     key = reel_key(reels)
     if key in METRICS_CACHE:
         return METRICS_CACHE[key]
@@ -168,14 +168,14 @@ def evaluate_metrics(reels):
 
 
 def create_evaluation_executor():
-    """建立整次演算法共用的 process pool；停用時回傳空 context。"""
+    """Create one process pool for the run, or an empty context if disabled."""
     if not USE_MULTIPROCESSING or MAX_WORKERS <= 1:
         return nullcontext(None)
     return ProcessPoolExecutor(max_workers=MAX_WORKERS)
 
 
 def evaluate_population(reels_population, executor=None):
-    """批次評估 unique reels，並將結果保存於主程序 cache。"""
+    """Evaluate unique reels in batches and cache them in the main process."""
     keys = [reel_key(reels) for reels in reels_population]
     pending = {}
     for key, reels in zip(keys, reels_population):
@@ -196,7 +196,7 @@ def evaluate_population(reels_population, executor=None):
 
 
 def save_history(history, results_directory):
-    """將每代最佳解寫入 CSV。"""
+    """Write each generation's representative result to CSV."""
     results_directory = Path(results_directory)
     results_directory.mkdir(exist_ok=True)
     output_path = results_directory / "ga_history.csv"
@@ -232,7 +232,7 @@ def save_best_solution(
     payout_statistics,
     results_directory,
 ):
-    """保存最後一代最佳解及報告繪圖需要的完整資料。"""
+    """Save the final solution and everything needed by the report charts."""
     results_directory = Path(results_directory)
     results_directory.mkdir(exist_ok=True)
     output_path = results_directory / "best_solution.json"
@@ -265,7 +265,7 @@ def save_best_solution(
 
 
 def local_search(reels, fitness_function):
-    """檢查所有單格 replacement 鄰居。"""
+    """Try every one-position replacement around the current solution."""
     best_reels = [reel[:] for reel in reels]
     best_metrics = evaluate_metrics(best_reels)
     best_score = fitness_function(best_metrics)
@@ -299,7 +299,7 @@ def print_metrics(generation, reels, metrics, score):
 
 
 def run_single_objective_ga(**kwargs):
-    """建立一次共用 executor，再執行普通 GA。"""
+    """Create one shared executor and run a single-objective GA."""
     with create_evaluation_executor() as executor:
         return _run_single_objective_ga(executor=executor, **kwargs)
 
@@ -315,7 +315,7 @@ def _run_single_objective_ga(
     repair_function=None,
     population_factory=None,
 ):
-    """執行兩個普通 GA 共用的世代流程。"""
+    """Run the generation loop shared by both single-objective GAs."""
     random.seed(RANDOM_SEED)
     clear_metrics_cache()
     population = (
@@ -325,8 +325,8 @@ def _run_single_objective_ga(
     )
     if len(population) != POPULATION_SIZE:
         raise ValueError(
-            "population_factory 必須產生 "
-            f"{POPULATION_SIZE} 個 individuals。"
+            "population_factory must create exactly "
+            f"{POPULATION_SIZE} individuals."
         )
     history = []
     best_score_so_far = None

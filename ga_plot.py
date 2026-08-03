@@ -14,13 +14,13 @@ DEFAULT_HISTORY_PATH = Path(
 
 
 def load_ga_history(history_path=DEFAULT_HISTORY_PATH):
-    """讀取 GA CSV，並將繪圖欄位轉成數字。"""
+    """Load GA history and convert chart fields to numbers."""
     history_path = Path(history_path)
     with history_path.open(encoding="utf-8-sig", newline="") as file:
         history = list(csv.DictReader(file))
 
     if not history:
-        raise ValueError(f"GA history 沒有資料：{history_path}")
+        raise ValueError(f"GA history is empty: {history_path}")
 
     integer_fields = {
         "generation",
@@ -47,7 +47,7 @@ def load_ga_history(history_path=DEFAULT_HISTORY_PATH):
 
 
 def add_series_figure(history, title, series):
-    """建立每項指標各自使用 Y 軸的 Plotly 子圖。"""
+    """Build Plotly subplots with a separate Y-axis for each metric."""
     figure = make_subplots(
         rows=len(series),
         cols=1,
@@ -93,18 +93,18 @@ def add_series_figure(history, title, series):
 
 
 def load_best_solution(history_path):
-    """讀取與 history CSV 位於同一目錄的最終最佳解。"""
+    """Load the final solution stored next to the history CSV."""
     solution_path = Path(history_path).parent / "best_solution.json"
     if not solution_path.exists():
         raise FileNotFoundError(
-            f"找不到最終最佳解：{solution_path}；請先重新執行 GA。"
+            f"Final solution not found: {solution_path}. Run the GA first."
         )
     with solution_path.open(encoding="utf-8") as file:
         return json.load(file)
 
 
 def create_prize_distribution_figure(best_solution):
-    """建立精確 payout 與 prize-tier 分布圖。"""
+    """Build the exact payout and prize-tier distribution chart."""
     payout_statistics = best_solution["payout_statistics"]
     payout_distribution = payout_statistics["payout_distribution"]
     prize_tiers = payout_statistics["prize_tiers"]
@@ -160,7 +160,6 @@ def create_prize_distribution_figure(best_solution):
         "small": "Small",
         "medium": "Medium",
         "big": "Big",
-        "super_big": "Super big",
     }
     tier_values = [
         prize_tiers[name]["probability_among_wins"]
@@ -195,7 +194,7 @@ def create_prize_distribution_figure(best_solution):
 
 
 def create_reel_symbol_distribution_figure(best_solution):
-    """建立各 reel 的 symbol 數量與占比分布圖。"""
+    """Chart the symbol counts and shares for each reel."""
     reels = best_solution["reels"]
     symbols = tuple(SYMBOL_MULTIPLIERS)
     labels = [f"Symbol {symbol}" for symbol in symbols]
@@ -257,7 +256,7 @@ def create_reel_symbol_distribution_figure(best_solution):
 
 
 def add_metric_target_lines(figure, best_solution):
-    """在四個核心 metrics 子圖加入遊戲設計目標線。"""
+    """Add game-design target lines to the four core metric charts."""
     metrics = best_solution["metrics"]
     reel_length = len(best_solution["reels"][0])
     symbol_count = len(SYMBOL_MULTIPLIERS)
@@ -295,7 +294,7 @@ def save_ga_charts(
     history_path=DEFAULT_HISTORY_PATH,
     results_directory=None,
 ):
-    """讀取完整 GA history，輸出 Plotly 收斂圖與指標變化圖。"""
+    """Load GA history and save the convergence and analysis charts."""
     history_path = Path(history_path)
     history = load_ga_history(history_path)
     best_solution = load_best_solution(history_path)
@@ -374,20 +373,20 @@ def save_ga_charts(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="依 GA history CSV 產生收斂與指標 PNG。",
+        description="Create convergence and metric PNGs from a GA history CSV.",
     )
     parser.add_argument(
         "history_path",
         nargs="?",
         default=DEFAULT_HISTORY_PATH,
         help=(
-            "ga_history.csv 路徑 "
-            "（預設：ga_results/ga_history.csv）"
+            "Path to ga_history.csv "
+            "(default: ga_weighted_game_design_results/ga_history.csv)"
         ),
     )
     arguments = parser.parse_args()
     paths = save_ga_charts(arguments.history_path)
-    print("收斂圖：", paths[0])
-    print("指標變化圖：", paths[1])
-    print("獎金分布圖：", paths[2])
-    print("Reel symbol 分布圖：", paths[3])
+    print("Convergence chart:", paths[0])
+    print("Metrics chart:", paths[1])
+    print("Prize distribution chart:", paths[2])
+    print("Reel symbol distribution chart:", paths[3])

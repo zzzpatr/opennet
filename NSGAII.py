@@ -38,15 +38,15 @@ RESULTS_DIRECTORY = Path("nsga2_results")
 OBJECTIVE_NAMES = (
     "rtp_violation_penalty",
     "win_rate_shortfall_penalty",
-    "missing_jackpot_penalty",
     "symbol_concentration_penalty",
+    "missing_jackpot_penalty",
 )
 ALGORITHM_NAME = "NSGA-II"
-FINAL_SOLUTION_NUMBER = 96
+FINAL_SOLUTION_NUMBER = 95
 
 
 def evaluate_reels(reels, metrics=None):
-    """使用與 Weighted GA 相同的四個 penalties 建立 objectives。"""
+    """Build objectives from the same four penalties used by Weighted GA."""
     if metrics is None:
         metrics = evaluate_metrics(reels)
     objectives = calculate_objective_penalties(metrics)
@@ -62,7 +62,7 @@ def evaluate_reels(reels, metrics=None):
 
 
 def dominates(individual_a, individual_b):
-    """以四個 objectives 的標準 Pareto dominance 判斷支配關係。"""
+    """Check standard Pareto dominance across all four objectives."""
     objectives_a = individual_a["objectives"]
     objectives_b = individual_b["objectives"]
     no_worse = all(
@@ -77,7 +77,7 @@ def dominates(individual_a, individual_b):
 
 
 def non_dominated_sort(population):
-    """使用 fast non-dominated sorting 將族群分成 Pareto fronts。"""
+    """Split the population into Pareto fronts with fast non-dominated sorting."""
     domination_counts = [0] * len(population)
     dominated_indices = [[] for _ in population]
     first_front = []
@@ -118,7 +118,7 @@ def non_dominated_sort(population):
 
 
 def assign_crowding_distance(front):
-    """計算同一 Pareto front 內的 crowding distance。"""
+    """Calculate crowding distance within one Pareto front."""
     if not front:
         return
     for individual in front:
@@ -156,7 +156,7 @@ def assign_crowding_distance(front):
 
 
 def rank_and_assign_crowding(population):
-    """完成 non-dominated sorting 並設定所有 crowding distances。"""
+    """Rank the population and assign all crowding distances."""
     fronts = non_dominated_sort(population)
     for front in fronts:
         assign_crowding_distance(front)
@@ -164,7 +164,7 @@ def rank_and_assign_crowding(population):
 
 
 def tournament_select(population):
-    """依 rank、crowding distance 進行 binary tournament。"""
+    """Run a binary tournament using rank and crowding distance."""
     individual_a, individual_b = random.sample(population, 2)
     if individual_a["rank"] != individual_b["rank"]:
         return min(
@@ -183,7 +183,7 @@ def tournament_select(population):
 
 
 def create_offspring(population, executor=None):
-    """使用 tournament、crossover 與 mutation 建立子代。"""
+    """Create offspring with tournament selection, crossover, and mutation."""
     offspring_reels = []
     while len(offspring_reels) < POPULATION_SIZE:
         parent_a = tournament_select(population)
@@ -208,7 +208,7 @@ def create_offspring(population, executor=None):
 
 
 def environmental_selection(combined_population):
-    """從 parents + offspring 中選出固定大小的下一代。"""
+    """Pick a fixed-size next generation from parents and offspring."""
     fronts = rank_and_assign_crowding(combined_population)
     next_population = []
     for front in fronts:
@@ -226,23 +226,23 @@ def environmental_selection(combined_population):
 
 
 def select_recommended_solution(pareto_front):
-    """選擇四項總和最低者，供每代 convergence 與摘要使用。"""
+    """Use the lowest penalty sum as each generation's chart representative."""
     return min(pareto_front, key=lambda item: item["weighted_score"])
 
 
 def select_final_plot_solution(pareto_front):
-    """選擇指定的 Pareto solution 產生最終輸出與分布圖。"""
+    """Pick the requested Pareto solution for the final output and charts."""
     solution_index = FINAL_SOLUTION_NUMBER - 1
     if not 0 <= solution_index < len(pareto_front):
         raise ValueError(
-            f"Pareto front 沒有 solution {FINAL_SOLUTION_NUMBER}；"
-            f"目前只有 {len(pareto_front)} 個 solutions。"
+            f"Pareto front does not have solution {FINAL_SOLUTION_NUMBER}; "
+            f"it only contains {len(pareto_front)} solutions."
         )
     return pareto_front[solution_index]
 
 
 def save_pareto_front(pareto_front):
-    """將最終 Pareto front 寫入 CSV。"""
+    """Write the final Pareto front to CSV."""
     RESULTS_DIRECTORY.mkdir(exist_ok=True)
     output_path = RESULTS_DIRECTORY / "nsga2_pareto_front.csv"
     fieldnames = [
@@ -281,7 +281,7 @@ def save_pareto_front(pareto_front):
 
 
 def print_generation_summary(generation, pareto_front):
-    """輸出當代 Pareto front 與推薦解摘要。"""
+    """Print a quick summary of the current Pareto front and representative."""
     recommended = select_recommended_solution(pareto_front)
     print(
         f"Generation {generation:3d} | "
@@ -295,7 +295,7 @@ def print_generation_summary(generation, pareto_front):
 
 
 def create_history_row(generation, recommended):
-    """建立與普通 GA 圖表格式相容的每代推薦解紀錄。"""
+    """Create a history row that works with the shared GA charts."""
     return {
         "generation": generation,
         "algorithm": ALGORITHM_NAME,
@@ -314,13 +314,13 @@ def create_history_row(generation, recommended):
 
 
 def run_nsga2():
-    """建立一次共用 executor，再執行 NSGA-II。"""
+    """Create one shared executor and run NSGA-II."""
     with create_evaluation_executor() as executor:
         return _run_nsga2(executor)
 
 
 def _run_nsga2(executor):
-    """執行 NSGA-II，回傳 Pareto front 與推薦解。"""
+    """Run NSGA-II and return the Pareto front and selected solution."""
     random.seed(RANDOM_SEED)
     clear_metrics_cache()
     initial_reels = create_initial_population()

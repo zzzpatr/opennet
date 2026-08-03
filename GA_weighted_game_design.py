@@ -10,8 +10,6 @@ from ga_common import (
 from slot_game import SYMBOL_MULTIPLIERS
 
 
-RTP_VIOLATION_SCALE = 0.01
-WIN_RATE_VIOLATION_SCALE = 0.01
 CONCENTRATION_WEIGHT = 30
 
 BALANCED_INITIALIZATION_RATIO = 0.50
@@ -21,7 +19,7 @@ SYMBOLS = tuple(SYMBOL_MULTIPLIERS)
 
 
 def minimum_symbol_concentration():
-    """回傳目前 reel 長度能達到的最低 symbol-frequency HHI。"""
+    """Return the lowest symbol-frequency HHI possible at this reel length."""
     base_count, remainder = divmod(REEL_LENGTH, len(SYMBOLS))
     squared_counts = (
         remainder * (base_count + 1) ** 2
@@ -34,7 +32,7 @@ MIN_SYMBOL_CONCENTRATION = minimum_symbol_concentration()
 
 
 def create_balanced_reel():
-    """建立各 symbol 數量最多只差一個的 reel。"""
+    """Build a reel where symbol counts differ by at most one."""
     base_count, remainder = divmod(REEL_LENGTH, len(SYMBOLS))
     extra_symbols = set(random.sample(SYMBOLS, remainder))
     reel = [
@@ -51,7 +49,7 @@ def create_balanced_individual():
 
 
 def create_initial_population():
-    """以 balanced 與 random individuals 各建立一半初始族群。"""
+    """Start with an even mix of balanced and random individuals."""
     balanced_count = int(
         POPULATION_SIZE * BALANCED_INITIALIZATION_RATIO
     )
@@ -67,7 +65,7 @@ def create_initial_population():
 
 
 def best_triple_window(reel, symbol):
-    """找出在 circular reel 建立指定 symbol triple 的最少修改位置。"""
+    """Find the circular window that needs the fewest edits for a symbol triple."""
     candidates = []
     for start in range(len(reel)):
         positions = tuple(
@@ -85,7 +83,7 @@ def best_triple_window(reel, symbol):
 
 
 def repair_missing_jackpot(reels):
-    """偶爾以最少 replacements 建立三條 reels 的共同 triple。"""
+    """Occasionally create a shared triple using as few replacements as possible."""
     if random.random() >= JACKPOT_REPAIR_RATE:
         return False
 
@@ -114,7 +112,7 @@ def repair_missing_jackpot(reels):
 
 
 def calculate_objective_penalties(metrics):
-    """回傳 Weighted GA 與 NSGA-II 共用的四個目標分數。"""
+    """Return the four objective penalties shared by Weighted GA and NSGA-II."""
     concentration_penalty = max(
         0.0,
         (
@@ -124,15 +122,15 @@ def calculate_objective_penalties(metrics):
         / (1.0 - MIN_SYMBOL_CONCENTRATION),
     )
     return (
-        metrics["rtp_violation"] / RTP_VIOLATION_SCALE,
-        metrics["win_rate_shortfall"] / WIN_RATE_VIOLATION_SCALE,
-        metrics["missing_jackpot"],
+        100 * metrics["rtp_violation"],
+        100 * metrics["win_rate_shortfall"],
         CONCENTRATION_WEIGHT * concentration_penalty,
+        metrics["missing_jackpot"],
     )
 
 
 def weighted_game_design_fitness(metrics):
-    """將四個目標相加為 Weighted GA 的單一 fitness。"""
+    """Add the four penalties to get the Weighted GA fitness."""
     return (sum(calculate_objective_penalties(metrics)),)
 
 
@@ -140,14 +138,14 @@ def run_ga_weighted_game_design():
     return run_single_objective_ga(
         algorithm_name="GA weighted game design",
         fitness_function=weighted_game_design_fitness,
-        # Concentration 是持續改善的軟目標，因此執行完整 generations。
+        # Concentration is a soft goal, so let it improve for all generations.
         target_reached=lambda _: False,
         results_directory=RESULTS_DIRECTORY,
         fitness_components=(
             "rtp_violation_penalty",
             "win_rate_shortfall_penalty",
-            "missing_jackpot_penalty",
             "symbol_concentration_penalty",
+            "missing_jackpot_penalty",
         ),
         repair_function=repair_missing_jackpot,
         population_factory=create_initial_population,

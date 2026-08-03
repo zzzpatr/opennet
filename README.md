@@ -1,33 +1,39 @@
-# Slot Game Reel Optimization Report
+# Slot Game Reel Optimization with GA and NSGA-II
 
-## 1. 作業目標
+## 1. What this project is about
 
-本作業以 Genetic Algorithm 搜尋 3×3 Slot Game 的 reel configuration。
-每組 reels 都會完整枚舉所有停止位置，以精確計算 RTP、Win rate、Jackpot
-與 symbol distribution。原始題目請參考 [DS-HomeWork.md](./DS-HomeWork.md)。
+This project uses Genetic Algorithms to search for a good reel configuration for a
+3×3 slot game. For every candidate, I enumerate every possible stop combination, so
+the RTP, win rate, Jackpot probability, and symbol distribution are exact rather than
+estimated from random simulations. The original assignment is available in
+[DS-HomeWork.md](./DS-HomeWork.md).
 
-除了滿足 RTP 與 Win rate，本作業也從遊戲設計與使用者體驗出發加入兩個
-最佳化目標。第一，若 reel 過度集中在少數 symbols，玩家可能會覺得畫面
-重複、分布不自然，因此加入 symbol concentration，希望每條 reel 的 symbols
-分布更平均。第二，一個合理的老虎機應該保留出現 Jackpot 的可能性，因此
-要求至少存在 3×3 九格全部相同的停止組合，並將 Jackpot probability 納入
-評估。
+The original task mainly focuses on RTP and win rate, but I also wanted to look at the
+game from a player-experience point of view. If a reel contains too many copies of the
+same symbol, the screen can feel repetitive or unnatural. I therefore added symbol
+concentration as another objective and tried to make the reel distribution more
+balanced.
 
-遊戲與目標設定：
+I also think a slot game should at least have a chance of producing a Jackpot. In this
+project, a Jackpot means that all nine cells show the same symbol. The optimization
+checks whether a candidate has any possible Jackpot result, while the actual Jackpot
+probability is reported separately for analysis.
 
-- 3 條 circular reels，每條長度 12。
-- 5 種 symbols，倍率為 `0.25、0.55、1、3、5`。
-- 使用題目定義的五種 winning patterns。
-- Pattern 4.5（3×3 全部相同）視為 Jackpot。
-- 目標 RTP 為 95%，容許範圍為 94%～96%。
-- Win rate 至少為 55%。
+The game setup is:
 
-每組 reels 共有 `12³ = 1,728` 種停止組合。本作業使用完整枚舉，不使用
-抽樣模擬。
+- Three circular reels, each with 12 positions.
+- Five symbols with multipliers of `0.25, 0.55, 1, 3, 5`.
+- Five winning patterns defined by the assignment.
+- Pattern 4.5, where all nine cells match, is treated as the Jackpot.
+- Target RTP: 95%, with an acceptable range of 94%–96%.
+- Minimum win rate: 55%.
 
-## 2. 評估指標
+With three 12-position reels, each candidate has `12³ = 1,728` possible stop
+combinations. All of them are evaluated.
 
-### RTP 與 Win rate
+## 2. What I measure
+
+### RTP and win rate
 
 ```python
 rtp = total_payout / total_bet
@@ -36,99 +42,160 @@ win_rate = winning_spins / total_spins
 
 ### Reel symbol concentration
 
-使用 HHI 衡量每條 reel 的 symbol frequency，再取三條 reels 的平均：
+I use HHI to measure the symbol distribution of each reel, then average the three reel
+values:
 
 ```python
 reel_hhi = sum((symbol_count / reel_length) ** 2)
 symbol_concentration = mean(reel_hhi for reel in reels)
 ```
 
-數值越低代表分布越平均。Reel 長度為 12 時，最平均配置為
-`3, 3, 2, 2, 2`，最低 concentration 為 `0.208333`。
+A lower value means the symbols are more evenly distributed. With 12 positions and
+five symbols, the most balanced count is `3, 3, 2, 2, 2`, which gives a theoretical
+minimum concentration of `0.208333`.
 
-## 3. 方法
+### Jackpot
 
-### 3.1 Baseline GA
+A stop combination is counted as a Jackpot when all nine cells contain the same
+symbol:
 
-Baseline 只最佳化題目要求的 RTP 與 Win rate：
+```python
+missing_jackpot = int(jackpot_spins == 0)
+jackpot_probability = jackpot_spins / total_spins
+```
+
+`missing_jackpot` is used by the optimization. `jackpot_probability` is only reported
+to show how often the Jackpot appears; the algorithm does not simply try to make this
+probability as large as possible.
+
+### Prize distribution
+
+The result charts also group winning payouts into three simple tiers:
+
+- Small: `≤ 1x bet`
+- Medium: `> 1x and < 5x bet`
+- Big: `≥ 5x bet`
+
+Prize distribution is currently used for analysis, not as an optimization objective.
+
+## 3. Methods and experiment setup
+
+### 3.1 Shared settings
+
+| Parameter | Value |
+|---|---:|
+| Population size | 200 |
+| Generations | 1,000 |
+| Reel length | 12 |
+| Random seed | 42 |
+| Single-symbol mutation rate | 4% |
+| Adjacent-pair mutation rate | 25% |
+| Swap mutation rate | 15% |
+
+Because every candidate is fully enumerated, evaluating the same reels always produces
+the same metrics and does not introduce sampling noise.
+
+### 3.2 Baseline GA
+
+The Baseline GA only considers the RTP and win-rate requirements from the original
+assignment:
 
 ```python
 fitness = rtp_error + 5 * win_rate_shortfall
 ```
 
-當 RTP 位於 94%～96% 且 Win rate 至少 55% 時停止。
+It stops when RTP is between 94% and 96% and win rate is at least 55%.
 
-### 3.2 Weighted GA
+### 3.3 Weighted GA
 
-Weighted GA 同時考慮四個 penalties：
+The Weighted GA combines four penalties into one score:
 
 ```python
 objectives = (
-    rtp_violation / 0.01,
-    win_rate_shortfall / 0.01,
-    missing_jackpot,
+    100 * rtp_violation,
+    100 * win_rate_shortfall,
     30 * concentration_penalty,
+    missing_jackpot,
 )
 
 fitness = sum(objectives)
 ```
 
-初始族群由 50% balanced reels 與 50% random reels 組成，並以 10% 機率
-進行 Jackpot repair。
+The concentration penalty is normalized using its theoretical minimum before applying
+the weight of 30. The Jackpot term only penalizes candidates with no possible Jackpot;
+it does not reward endlessly increasing Jackpot probability.
 
-### 3.3 NSGA-II
+The initial population contains 50% balanced reels and 50% random reels. A Jackpot
+repair operator is also applied with a 10% probability.
 
-NSGA-II 使用與 Weighted GA 相同的四個 objectives，但不先相加，而是透過
-Pareto dominance、non-dominated sorting 與 crowding distance 保留不同
-取捨的解。它的優點不是只給出一個固定答案，而是產生多組 Pareto solutions，
-讓我們觀察降低 concentration 時，RTP、Win rate 與 Jackpot probability
-可能產生的 trade-off。
+### 3.4 NSGA-II
 
-本次實驗不使用硬限制，並在分析 Pareto front 後人工選擇 solution 96 作為
-最終報告解。若目標是讓 concentration 更低，可以選擇 solution 96；但代價是
-RTP 與 Win rate 可能違反原始限制。此選擇只影響最終輸出，不影響 NSGA-II
-搜尋過程。
+NSGA-II uses the same four objectives as the Weighted GA, but it keeps them separate.
+Pareto dominance, non-dominated sorting, and crowding distance allow it to preserve
+multiple trade-off solutions instead of returning only one weighted answer.
 
-### 3.4 GA operators 與客製化設計
+The NSGA-II search itself does not use hard constraints. After generating the Pareto
+front, I first keep solutions that satisfy:
 
-三種演算法共用逐條 reel 的 single-point crossover，並搭配三種 mutation：
+```python
+0.90 <= rtp <= 1.00
+win_rate > 0.45
+jackpot_probability > 0
+```
 
-- **Single-symbol mutation**：將單一位置替換成其他 symbol，改變 symbol 數量
-  與遊戲指標。
-- **Adjacent-pair mutation**：將 circular reel 中相鄰兩格改成相同 symbol，
-  增加產生連續相同 symbols 的機會。
-- **Swap mutation**：交換同一條 reel 的兩個位置。此操作不改變 symbol 數量
-  與 concentration，但可以調整排列、RTP、Win rate 與中獎組合。
+Among these candidates, solution 95 has the lowest symbol concentration, so I use it
+for the final NSGA-II report and charts. This is a post-search selection rule and does
+not restrict the search space during evolution.
 
-Baseline GA 與 Weighted GA 使用 elitism，保留每代前 5 個 individuals。若
-連續 20 代沒有改善，演算法會提高 mutation rates、對最佳解執行單格 local
-search，並加入 25% random immigrants，以增加跳出 local optimum 的機會。
+### 3.5 GA operators and custom design choices
 
-Weighted GA 與 NSGA-II 另外使用兩項遊戲設計導向的調整：初始族群由 50%
-balanced reels 與 50% random reels 組成，讓搜尋兼顧低 concentration 與
-多樣性；同時以 10% 機率執行 Jackpot repair，透過最少 replacements 建立
-三條 reels 的共同三連續 symbol，使九格相同的 Jackpot 成為可能。
+All three algorithms use single-point crossover on each reel and three mutation
+operators:
 
-NSGA-II 的 mutation 與 repair 相同，但 selection 改用 Pareto rank、crowding
-distance 和 binary tournament，並從 parents 與 offspring 中共同選出下一代。
+- **Single-symbol mutation:** replaces one position with another symbol. This changes
+  both the symbol count and the game metrics.
+- **Adjacent-pair mutation:** changes two neighboring positions on a circular reel to
+  the same symbol, making consecutive matching symbols more likely.
+- **Swap mutation:** swaps two positions on the same reel. This is especially useful
+  here because it changes the arrangement, RTP, win rate, and winning combinations
+  without changing the symbol counts or concentration.
 
-## 4. 實驗結果
+The Baseline and Weighted GAs keep the top five individuals through elitism. If there
+is no improvement for 20 generations, they temporarily increase the mutation rates,
+run a single-position local search around the best candidate, and replace 25% of the
+population with random immigrants. These steps help the search move away from a local
+optimum.
+
+The Weighted GA and NSGA-II also use two game-specific ideas. First, half of the
+initial population is deliberately balanced, while the other half remains random for
+diversity. Second, Jackpot repair finds the smallest number of symbol replacements
+needed to create a shared three-symbol window across the reels, making a nine-cell
+Jackpot possible.
+
+NSGA-II uses the same mutation and repair operators, but selection is based on Pareto
+rank, crowding distance, and binary tournaments. The next generation is selected from
+the combined parent and offspring populations.
+
+## 4. Results
 
 | Algorithm | Generation | RTP | Win rate | Concentration | Jackpot probability | Score |
 |---|---:|---:|---:|---:|---:|---:|
 | Baseline GA | 57 | 94.5833% | 55.9028% | 0.458333 | 0% | 0.004167 |
-| Weighted GA | 1000 | 95.1736% | 56.7130% | 0.393519 | 3.472222% | 7.017544 |
-| NSGA-II solution 96 | 1000 | 96.5278% | 51.5046% | 0.388889 | 0.694444% | 10.865253 |
+| Weighted GA | 1,000 | 95.1736% | 56.7130% | 0.393519 | 3.472222% | 7.017544 |
+| NSGA-II solution 95 | 1,000 | 91.6667% | 46.8750% | 0.351852 | 1.388889% | 15.896930 |
 
-Baseline 使用不同的 fitness，因此其 score 不能直接與另外兩種方法比較。
+The Baseline uses a different fitness function, so its score should not be compared
+directly with the other two. The Weighted GA score is the sum of its four penalties.
+NSGA-II does not minimize this sum during evolution; its displayed score is only a
+convenient way to compare Pareto solutions.
 
 ### 4.1 Baseline GA
 
-Baseline 成功滿足 RTP 與 Win rate，但沒有 Jackpot，且 concentration 是
-三者中最高的。
+The Baseline reaches the original RTP and win-rate targets quickly, but it has no
+possible Jackpot and has the highest concentration of the three selected results.
 
 <details>
-<summary>查看 Baseline reels 與圖表</summary>
+<summary>Show Baseline reels and charts</summary>
 
 ```text
 Reel 1: [1, 1, 3, 1, 1, 1, 1, 3, 3, 3, 3, 1]
@@ -146,11 +213,12 @@ Reel 3: [0, 2, 2, 1, 1, 3, 3, 2, 3, 3, 1, 3]
 
 ### 4.2 Weighted GA
 
-Weighted GA 是唯一同時符合 RTP、Win rate 與 Jackpot 條件的解，且
-concentration 也比 Baseline 低，因此是本作業中最適合直接採用的結果。
+The Weighted GA is the only selected result that satisfies the RTP, win-rate, and
+Jackpot requirements at the same time. Its concentration is also lower than the
+Baseline, so it is the most practical final design from this experiment.
 
 <details>
-<summary>查看 Weighted GA reels 與圖表</summary>
+<summary>Show Weighted GA reels and charts</summary>
 
 ```text
 Reel 1: [1, 1, 1, 1, 3, 3, 4, 0, 2, 1, 1, 1]
@@ -166,19 +234,21 @@ Reel 3: [1, 3, 3, 3, 2, 2, 0, 4, 0, 1, 1, 1]
 
 </details>
 
-### 4.3 NSGA-II solution 96
+### 4.3 NSGA-II solution 95
 
-Solution 96 的 concentration 略低於 Weighted GA，但 RTP 為 96.5278%、
-Win rate 為 51.5046%，兩者都未符合原始條件。它是人工分析 Pareto front
-後選出的折衷解，不應描述為完全合格。
+Solution 95 has the lowest concentration among the Pareto solutions that pass the
+relaxed filter. Its concentration is `0.351852`, which is lower than the Weighted GA.
+However, its RTP is only 91.6667% and its win rate is 46.8750%, so it does not satisfy
+the original requirements. It is best understood as a trade-off that gives higher
+priority to a balanced symbol distribution.
 
 <details>
-<summary>查看 NSGA-II reels 與圖表</summary>
+<summary>Show NSGA-II reels and charts</summary>
 
 ```text
-Reel 1: [2, 2, 2, 1, 3, 3, 2, 2, 4, 2, 2, 4]
-Reel 2: [2, 2, 2, 2, 2, 2, 2, 4, 3, 3, 3, 2]
-Reel 3: [2, 2, 2, 2, 0, 3, 3, 3, 1, 4, 4, 4]
+Reel 1: [2, 2, 2, 3, 3, 0, 1, 4, 2, 2, 4, 2]
+Reel 2: [2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 1]
+Reel 3: [0, 2, 2, 2, 2, 4, 3, 3, 1, 1, 4, 0]
 ```
 
 | Convergence | Metrics |
@@ -189,48 +259,60 @@ Reel 3: [2, 2, 2, 2, 0, 3, 3, 3, 1, 4, 4, 4]
 
 </details>
 
-## 5. 結論
+## 5. Takeaway
 
-- Baseline GA 能快速找到符合原題 RTP 與 Win rate 的解，但沒有處理 Jackpot
-  與 reel distribution。
-- Weighted GA 同時滿足主要條件並改善 concentration，是本次最實用的解。
-- NSGA-II 能提供多組解，幫助理解 RTP、Win rate、Jackpot probability 與
-  concentration 之間的 trade-off。若優先追求更低的 concentration，可以選擇
-  solution 96，但其 RTP 與 Win rate 會違反原始限制。
+- The Baseline GA quickly finds a solution that meets the original RTP and win-rate
+  requirements, but it does not consider Jackpot availability or reel distribution.
+- The Weighted GA meets the main requirements, keeps a possible Jackpot, and improves
+  concentration. It is the most practical result from this run.
+- NSGA-II provides several alternatives and makes the trade-offs between RTP, win
+  rate, Jackpot availability, and concentration easier to see. Solution 95 is useful
+  when a lower concentration is more important, but it violates the original RTP and
+  win-rate limits.
 
-因此，本作業建議以 Weighted GA 作為最終方案，NSGA-II 則作為多目標分析
-與延伸實驗。
+For this project, I would use the Weighted GA result as the final game design and use
+NSGA-II as a tool for exploring alternative trade-offs.
 
-## 6. 延伸方向
+## 6. Possible next steps
 
-本作業目前主要聚焦在 reel configuration 的遊戲設計，最佳化目標仍可從
-以下方向擴充：
+This project mainly focuses on reel configuration and game design. There are several
+ways it could be extended:
 
-- **獎金分布與遊戲波動度**：除了 RTP，也可以控制小獎、中獎與大獎的出現
-  比例，分析 payout variance，使遊戲節奏更符合預期。
-- **Near-winning 體驗**：統計差一格即可連線或觸發 Jackpot 的結果，將其頻率
-  納入最佳化。不過需要避免過度製造接近中獎的錯覺，在玩家體驗與公平性之間
-  取得平衡。
-- **不同長度的 reels**：目前為了簡化完整枚舉與比較，三條 reels 都限制為
-  12 格。未來可以允許每條 reel 使用不同長度，增加 symbol arrangement 與
-  中獎機率的變化性。
-- **更多遊戲規則**：可加入更多 paylines、Wild、Scatter、Bonus Game 或
-  Free Spin，研究不同機制對 RTP、Win rate 與 Jackpot 的影響。
-- **限制與解的選擇方式**：可在 NSGA-II 加入必要的 RTP、Win rate 硬限制，
-  或設計自動選解規則，從 Pareto front 中找出最符合實際需求的方案。
-- **結果穩定性**：GA 具有隨機性，應使用不同 random seeds 重複實驗，比較各演算法的平均表現、
-  標準差與成功率，避免只根據單次執行結果下結論。
+- **Prize distribution and volatility:** RTP alone does not describe how the game
+  feels. Small, medium, and big prize frequencies, payout variance, and hit streaks
+  could also become optimization objectives.
+- **Near-win experience:** The program could measure results that are one symbol away
+  from a normal win or Jackpot. This should be handled carefully so that the game does
+  not create misleading near-win experiences.
+- **Different reel lengths:** All three reels currently have 12 positions to keep full
+  enumeration and comparison simple. Allowing different reel lengths would create
+  more varied symbol arrangements and probability structures.
+- **More game mechanics:** Wilds, Scatters, extra paylines, Free Spins, and Bonus Games
+  could be added and included in the optimization.
+- **Constraint and solution-selection methods:** I previously tried layered or
+  lexicographic ranking for RTP, win rate, Jackpot, and concentration, but it did not
+  find a usable solution. Giving the earlier layers too much priority may prevent the
+  later objectives from improving and reduce exploration. Adaptive penalties,
+  constraint-domination, epsilon constraints, or gradually tightening soft
+  constraints could be compared instead. Knee points, distance to an ideal point, or
+  reference points could also select a Pareto solution automatically.
+- **Parameter sensitivity:** Different penalty weights, mutation rates, population
+  sizes, and repair rates should be compared to see how much the results depend on the
+  current settings.
+- **Result stability:** Genetic Algorithms are stochastic. Repeating each experiment
+  with several random seeds would make it possible to report the mean, standard
+  deviation, and success rate instead of relying on one run.
 
-## 7. 執行方式
+## 7. How to run it
 
-安裝套件：
+Create the environment and install the dependencies:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
 ```
 
-執行三種演算法：
+Run the three algorithms:
 
 ```powershell
 .\.venv\Scripts\python.exe .\GA_baseline.py
@@ -238,13 +320,22 @@ python -m venv .venv
 .\.venv\Scripts\python.exe .\NSGAII.py
 ```
 
-主要程式：
+The generated results are stored in:
+
+- [Baseline GA results](./ga_baseline_results/)
+- [Weighted GA results](./ga_weighted_game_design_results/)
+- [NSGA-II results](./nsga2_results/), including the complete
+  [Pareto front CSV](./nsga2_results/nsga2_pareto_front.csv)
+
+Each folder contains `best_solution.json`, `ga_history.csv`, and four analysis charts.
+
+Main source files:
 
 ```text
-slot_game.py                 遊戲規則與完整枚舉
-ga_common.py                 共用 metrics、operators 與 GA runner
+slot_game.py                 Game rules and full enumeration
+ga_common.py                 Shared metrics, operators, and GA runner
 GA_baseline.py               Baseline GA
 GA_weighted_game_design.py   Weighted GA
-NSGAII.py                    NSGA-II 與 Pareto front
-ga_plot.py                   結果圖表
+NSGAII.py                    NSGA-II and Pareto front output
+ga_plot.py                   Result charts
 ```

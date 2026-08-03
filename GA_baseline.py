@@ -12,7 +12,7 @@ RESULTS_DIRECTORY = Path("ga_baseline_results")
 
 
 def baseline_fitness(metrics):
-    """只考量原題的 RTP 與 Win rate。"""
+    """Score a candidate using only the assignment's RTP and win-rate goals."""
     weighted_error = (
         metrics["rtp_error"]
         + WIN_RATE_WEIGHT * metrics["win_rate_shortfall"]
@@ -21,7 +21,7 @@ def baseline_fitness(metrics):
 
 
 def baseline_target_reached(metrics):
-    """原題要求：RTP 約 95%，Win rate 不低於 55%。"""
+    """Stop when RTP is near 95% and win rate is at least 55%."""
     return (
         metrics["rtp_error"] <= RTP_TOLERANCE
         and metrics["win_rate"] >= MIN_WIN_RATE

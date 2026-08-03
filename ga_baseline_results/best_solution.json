@@ -57,19 +57,10 @@
     "rtp_violation": 0,
     "win_rate": 0.5590277777777778,
     "win_rate_shortfall": 0,
-    "symbol_winning_spins": [
-      0,
-      698,
-      0,
-      268,
-      0
-    ],
-    "missing_symbols": 3,
     "symbol_concentration": 0.4583333333333333,
     "jackpot_spins": 0,
     "jackpot_probability": 0.0,
-    "missing_jackpot": 1,
-    "jackpot_reel_shortfall": 1
+    "missing_jackpot": 1
   },
   "payout_statistics": {
     "jackpot_spins": 0,
@@ -148,11 +139,6 @@
         "spin_count": 76,
         "probability": 0.04398148148148148,
         "probability_among_wins": 0.07867494824016563
-      },
-      "super_big": {
-        "spin_count": 0,
-        "probability": 0.0,
-        "probability_among_wins": 0.0
       }
     }
   }
