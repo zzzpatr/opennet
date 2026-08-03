@@ -4,7 +4,4 @@
 __pycache__/
 *.py[cod]
 ga_results/
-ga_baseline_results/
 ga_game_design_results/
-ga_weighted_game_design_results/
-nsga2_results/

@@ -1,0 +1,149 @@
+{
+  "algorithm": "NSGA-II",
+  "generation": 1000,
+  "fitness_score": [
+    10.865253411306055
+  ],
+  "reels": [
+    [
+      2,
+      2,
+      2,
+      1,
+      3,
+      3,
+      2,
+      2,
+      4,
+      2,
+      2,
+      4
+    ],
+    [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      4,
+      3,
+      3,
+      3,
+      2
+    ],
+    [
+      2,
+      2,
+      2,
+      2,
+      0,
+      3,
+      3,
+      3,
+      1,
+      4,
+      4,
+      4
+    ]
+  ],
+  "metrics": {
+    "total_spins": 1728,
+    "winning_spins": 890,
+    "total_payout": 166800,
+    "rtp": 0.9652777777777778,
+    "rtp_error": 0.015277777777777835,
+    "rtp_violation": 0.005277777777777834,
+    "win_rate": 0.5150462962962963,
+    "win_rate_shortfall": 0.034953703703703765,
+    "symbol_winning_spins": [
+      0,
+      0,
+      768,
+      122,
+      0
+    ],
+    "symbol_concentration": 0.3888888888888889,
+    "jackpot_spins": 12,
+    "jackpot_probability": 0.006944444444444444,
+    "missing_jackpot": 0,
+    "jackpot_reel_shortfall": 0
+  },
+  "payout_statistics": {
+    "jackpot_spins": 12,
+    "jackpot_probability": 0.006944444444444444,
+    "average_winning_payout": 187.41573033707866,
+    "minimum_winning_payout": 100,
+    "maximum_winning_payout": 900,
+    "payout_distribution": [
+      {
+        "payout": 100,
+        "payout_multiplier": 1.0,
+        "spin_count": 468,
+        "probability": 0.2708333333333333,
+        "probability_among_wins": 0.5258426966292135,
+        "total_payout": 46800,
+        "payout_share": 0.2805755395683453
+      },
+      {
+        "payout": 200,
+        "payout_multiplier": 2.0,
+        "spin_count": 204,
+        "probability": 0.11805555555555555,
+        "probability_among_wins": 0.2292134831460674,
+        "total_payout": 40800,
+        "payout_share": 0.2446043165467626
+      },
+      {
+        "payout": 300,
+        "payout_multiplier": 3.0,
+        "spin_count": 186,
+        "probability": 0.1076388888888889,
+        "probability_among_wins": 0.20898876404494382,
+        "total_payout": 55800,
+        "payout_share": 0.3345323741007194
+      },
+      {
+        "payout": 600,
+        "payout_multiplier": 6.0,
+        "spin_count": 18,
+        "probability": 0.010416666666666666,
+        "probability_among_wins": 0.020224719101123594,
+        "total_payout": 10800,
+        "payout_share": 0.06474820143884892
+      },
+      {
+        "payout": 900,
+        "payout_multiplier": 9.0,
+        "spin_count": 14,
+        "probability": 0.008101851851851851,
+        "probability_among_wins": 0.015730337078651686,
+        "total_payout": 12600,
+        "payout_share": 0.07553956834532374
+      }
+    ],
+    "prize_tiers": {
+      "small": {
+        "spin_count": 468,
+        "probability": 0.2708333333333333,
+        "probability_among_wins": 0.5258426966292135
+      },
+      "medium": {
+        "spin_count": 390,
+        "probability": 0.22569444444444445,
+        "probability_among_wins": 0.43820224719101125
+      },
+      "big": {
+        "spin_count": 32,
+        "probability": 0.018518518518518517,
+        "probability_among_wins": 0.035955056179775284
+      },
+      "super_big": {
+        "spin_count": 0,
+        "probability": 0.0,
+        "probability_among_wins": 0.0
+      }
+    }
+  }
+}
