@@ -1,6 +1,9 @@
 import csv
 import json
+import os
 import random
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 from ga_plot import save_ga_charts
@@ -15,7 +18,7 @@ from slot_game import (
 
 REEL_LENGTH = 12
 POPULATION_SIZE = 200
-GENERATIONS = 500
+GENERATIONS = 1000
 ELITE_SIZE = 5
 MUTATION_RATE = 0.04
 PAIR_MUTATION_RATE = 0.25
@@ -26,12 +29,13 @@ BOOSTED_PAIR_MUTATION_RATE = 0.30
 BOOSTED_SWAP_MUTATION_RATE = 0.30
 BOOST_DURATION = 10
 IMMIGRANT_RATIO = 0.25
-MISSING_SYMBOL_REPAIR_RATE = 0.8
 TARGET_RTP = 0.95
 MIN_WIN_RATE = 0.55
 RTP_TOLERANCE = 0.01
 RANDOM_SEED = 42
 PRINT_INTERVAL = 10
+USE_MULTIPROCESSING = True
+MAX_WORKERS = min(8, os.cpu_count() or 1)
 
 METRICS_CACHE = {}
 
@@ -104,65 +108,21 @@ def mutate(
             )
 
 
-def repair_missing_symbol(
-    reels,
-    metrics=None,
-    repair_rate=MISSING_SYMBOL_REPAIR_RATE,
-):
-    """替一個無法中獎的 symbol 在相鄰兩條 reels 建立 pair。"""
-    if random.random() >= repair_rate:
-        return False
-    if metrics is None:
-        metrics = evaluate_metrics(reels)
-
-    missing_symbols = [
-        symbol
-        for symbol, winning_spins in enumerate(
-            metrics["symbol_winning_spins"]
-        )
-        if winning_spins == 0
-    ]
-    if not missing_symbols:
-        return False
-
-    target_symbol = random.choice(missing_symbols)
-    reel_pair = random.choice(((0, 1), (1, 2)))
-    for reel_index in reel_pair:
-        reel = reels[reel_index]
-        start = random.randrange(len(reel))
-        reel[start] = target_symbol
-        reel[(start + 1) % len(reel)] = target_symbol
-    return True
-
-
-def calculate_symbol_concentration(symbol_winning_spins):
-    """以 HHI 衡量 symbol winning-spins 集中程度。"""
-    total_wins = sum(symbol_winning_spins)
-    if total_wins == 0:
-        return 1.0
-    return sum(
-        (winning_spins / total_wins) ** 2
-        for winning_spins in symbol_winning_spins
-    )
-
-
-def calculate_jackpot_reel_shortfall(reels):
-    """最佳 symbol 還缺幾條 reels 才能各自形成連續三格。"""
-    capable_reel_counts = []
-    for symbol in SYMBOL_MULTIPLIERS:
-        capable_reels = 0
-        for reel in reels:
-            reel_length = len(reel)
-            if any(
-                all(
-                    reel[(start + offset) % reel_length] == symbol
-                    for offset in range(3)
-                )
-                for start in range(reel_length)
-            ):
-                capable_reels += 1
-        capable_reel_counts.append(capable_reels)
-    return 3 - max(capable_reel_counts)
+def calculate_symbol_concentration(reels):
+    """以各 reel 的 symbol-frequency HHI 衡量分布集中程度。"""
+    reel_concentrations = []
+    symbols = tuple(SYMBOL_MULTIPLIERS)
+    for reel in reels:
+        reel_length = len(reel)
+        if reel_length == 0:
+            raise ValueError("Reel 不可為空。")
+        reel_concentrations.append(sum(
+            (reel.count(symbol) / reel_length) ** 2
+            for symbol in symbols
+        ))
+    if not reel_concentrations:
+        raise ValueError("Reels 不可為空。")
+    return sum(reel_concentrations) / len(reel_concentrations)
 
 
 def evaluate_metrics(reels):
@@ -177,15 +137,11 @@ def evaluate_metrics(reels):
         total_payout,
         rtp,
         win_rate,
-        symbol_statistics,
+        _symbol_statistics,
         payout_statistics,
     ) = calculate_game_statistics(
         reels,
         include_payout_statistics=True,
-    )
-    symbol_winning_spins = tuple(
-        statistics["winning_spins"]
-        for statistics in symbol_statistics.values()
     )
     jackpot_spins = payout_statistics["jackpot_spins"]
     metrics = {
@@ -200,23 +156,43 @@ def evaluate_metrics(reels):
         ),
         "win_rate": win_rate,
         "win_rate_shortfall": max(0, MIN_WIN_RATE - win_rate),
-        "symbol_winning_spins": symbol_winning_spins,
-        "missing_symbols": sum(
-            winning_spins == 0
-            for winning_spins in symbol_winning_spins
-        ),
         "symbol_concentration": calculate_symbol_concentration(
-            symbol_winning_spins
+            reels
         ),
         "jackpot_spins": jackpot_spins,
         "jackpot_probability": jackpot_spins / total_spins,
         "missing_jackpot": int(jackpot_spins == 0),
-        "jackpot_reel_shortfall": calculate_jackpot_reel_shortfall(
-            reels
-        ),
     }
     METRICS_CACHE[key] = metrics
     return metrics
+
+
+def create_evaluation_executor():
+    """建立整次演算法共用的 process pool；停用時回傳空 context。"""
+    if not USE_MULTIPROCESSING or MAX_WORKERS <= 1:
+        return nullcontext(None)
+    return ProcessPoolExecutor(max_workers=MAX_WORKERS)
+
+
+def evaluate_population(reels_population, executor=None):
+    """批次評估 unique reels，並將結果保存於主程序 cache。"""
+    keys = [reel_key(reels) for reels in reels_population]
+    pending = {}
+    for key, reels in zip(keys, reels_population):
+        if key not in METRICS_CACHE and key not in pending:
+            pending[key] = reels
+
+    if pending:
+        pending_keys = list(pending)
+        pending_reels = [pending[key] for key in pending_keys]
+        if executor is None:
+            results = map(evaluate_metrics, pending_reels)
+        else:
+            results = executor.map(evaluate_metrics, pending_reels)
+        for key, metrics in zip(pending_keys, results):
+            METRICS_CACHE[key] = metrics
+
+    return [METRICS_CACHE[key] for key in keys]
 
 
 def save_history(history, results_directory):
@@ -228,14 +204,11 @@ def save_history(history, results_directory):
         "generation",
         "algorithm",
         "fitness_mode",
-        "fitness_priority",
-        "fitness_score",
         "primary_fitness",
         "weighted_error",
         "missing_jackpot",
         "jackpot_spins",
         "jackpot_probability",
-        "missing_symbols",
         "symbol_concentration",
         "win_rate_shortfall",
         "rtp_error",
@@ -278,12 +251,7 @@ def save_best_solution(
         "generation": generation,
         "fitness_score": list(score),
         "reels": reels,
-        "metrics": {
-            **metrics,
-            "symbol_winning_spins": list(
-                metrics["symbol_winning_spins"]
-            ),
-        },
+        "metrics": metrics,
         "payout_statistics": {
             **payout_statistics,
             "payout_distribution": payout_distribution,
@@ -324,43 +292,64 @@ def print_metrics(generation, reels, metrics, score):
         f"Generation {generation:3d} | score={score} | "
         f"RTP={metrics['rtp']:.4%} | "
         f"win rate={metrics['win_rate']:.4%} | "
-        f"missing symbols={metrics['missing_symbols']} | "
         f"concentration={metrics['symbol_concentration']:.6f} | "
         f"jackpot={metrics['jackpot_spins']} "
         f"({metrics['jackpot_probability']:.6%})"
     )
 
 
-def run_single_objective_ga(
+def run_single_objective_ga(**kwargs):
+    """建立一次共用 executor，再執行普通 GA。"""
+    with create_evaluation_executor() as executor:
+        return _run_single_objective_ga(executor=executor, **kwargs)
+
+
+def _run_single_objective_ga(
     *,
+    executor,
     algorithm_name,
     fitness_function,
     target_reached,
     results_directory,
-    fitness_mode,
-    fitness_priority,
-    primary_fitness,
+    fitness_components,
     repair_function=None,
+    population_factory=None,
 ):
     """執行兩個普通 GA 共用的世代流程。"""
     random.seed(RANDOM_SEED)
     clear_metrics_cache()
-    population = [create_individual() for _ in range(POPULATION_SIZE)]
+    population = (
+        population_factory()
+        if population_factory is not None
+        else [create_individual() for _ in range(POPULATION_SIZE)]
+    )
+    if len(population) != POPULATION_SIZE:
+        raise ValueError(
+            "population_factory 必須產生 "
+            f"{POPULATION_SIZE} 個 individuals。"
+        )
     history = []
     best_score_so_far = None
     generations_without_improvement = 0
     boost_generations_remaining = 0
 
     print(f"\nAlgorithm: {algorithm_name}")
-    print(f"Fitness: {' > '.join(fitness_priority)}\n")
+    print(f"Fitness components: {' + '.join(fitness_components)}\n")
+    print(
+        "Evaluation: "
+        + (
+            f"multiprocessing ({MAX_WORKERS} workers)"
+            if executor is not None
+            else "single process"
+        )
+    )
 
     for generation in range(1, GENERATIONS + 1):
-        evaluated = []
-        for reels in population:
-            metrics = evaluate_metrics(reels)
-            evaluated.append(
-                (fitness_function(metrics), metrics, reels)
-            )
+        metrics_list = evaluate_population(population, executor)
+        evaluated = [
+            (fitness_function(metrics), metrics, reels)
+            for reels, metrics in zip(population, metrics_list)
+        ]
         evaluated.sort(key=lambda item: item[0])
         best_score, best_metrics, best_reels = evaluated[0]
 
@@ -404,23 +393,14 @@ def run_single_objective_ga(
         history.append({
             "generation": generation,
             "algorithm": algorithm_name,
-            "fitness_mode": fitness_mode,
-            "fitness_priority": ">".join(fitness_priority),
-            "fitness_score": repr(best_score),
-            "primary_fitness": primary_fitness(
-                best_score,
-                best_metrics,
-            ),
-            "weighted_error": primary_fitness(
-                best_score,
-                best_metrics,
-            ),
+            "fitness_mode": "single-objective",
+            "primary_fitness": best_score[0],
+            "weighted_error": best_score[0],
             "missing_jackpot": best_metrics["missing_jackpot"],
             "jackpot_spins": best_metrics["jackpot_spins"],
             "jackpot_probability": best_metrics[
                 "jackpot_probability"
             ],
-            "missing_symbols": best_metrics["missing_symbols"],
             "symbol_concentration": best_metrics[
                 "symbol_concentration"
             ],
@@ -496,7 +476,7 @@ def run_single_objective_ga(
     print(f"Convergence chart: {chart_paths[0]}")
     print(f"Metrics chart: {chart_paths[1]}")
     print(f"Prize distribution chart: {chart_paths[2]}")
-    print(f"Symbol winning chart: {chart_paths[3]}")
+    print(f"Reel symbol distribution chart: {chart_paths[3]}")
     print("\nBest reels:")
     print_metrics(generation, best_reels, best_metrics, best_score)
     print_winning_payout_statistics(payout_statistics)

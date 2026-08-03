@@ -5,9 +5,12 @@ from pathlib import Path
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from slot_game import SYMBOL_MULTIPLIERS
 
 
-DEFAULT_HISTORY_PATH = Path("ga_results/ga_history.csv")
+DEFAULT_HISTORY_PATH = Path(
+    "ga_weighted_game_design_results/ga_history.csv"
+)
 
 
 def load_ga_history(history_path=DEFAULT_HISTORY_PATH):
@@ -23,7 +26,6 @@ def load_ga_history(history_path=DEFAULT_HISTORY_PATH):
         "generation",
         "missing_jackpot",
         "jackpot_spins",
-        "missing_symbols",
     }
     float_fields = {
         "primary_fitness",
@@ -88,24 +90,6 @@ def add_series_figure(history, title, series):
         showlegend=False,
     )
     return figure
-
-
-def infer_fitness_settings(history):
-    """由 CSV 推斷 fitness 模式及分層優先順序。"""
-    fitness_mode = history[0]["fitness_mode"]
-    stored_priority = history[0].get("fitness_priority", "")
-    priority = tuple(
-        name for name in stored_priority.split(">")
-        if name
-    )
-    if not priority:
-        priority = (
-            "missing_jackpot",
-            "missing_symbols",
-            "win_rate",
-            "rtp",
-        )
-    return fitness_mode, priority
 
 
 def load_best_solution(history_path):
@@ -210,60 +194,100 @@ def create_prize_distribution_figure(best_solution):
     return figure
 
 
-def create_symbol_winning_figure(best_solution):
-    """建立各 symbol winning-spins 次數與占比圖。"""
-    winning_spins = best_solution["metrics"]["symbol_winning_spins"]
-    total = sum(winning_spins)
-    shares = [
-        value / total if total else 0
-        for value in winning_spins
-    ]
-    labels = [f"Symbol {index}" for index in range(len(winning_spins))]
+def create_reel_symbol_distribution_figure(best_solution):
+    """建立各 reel 的 symbol 數量與占比分布圖。"""
+    reels = best_solution["reels"]
+    symbols = tuple(SYMBOL_MULTIPLIERS)
+    labels = [f"Symbol {symbol}" for symbol in symbols]
     figure = make_subplots(
-        rows=1,
-        cols=2,
-        subplot_titles=("Winning spins", "Winning-spins share"),
+        rows=2,
+        cols=1,
+        vertical_spacing=0.18,
+        subplot_titles=("Symbol counts by reel", "Symbol shares by reel"),
     )
-    figure.add_trace(
-        go.Bar(
-            x=labels,
-            y=winning_spins,
-            marker_color="#7c3aed",
-            text=[str(value) for value in winning_spins],
-            textposition="outside",
-            name="Winning spins",
-        ),
-        row=1,
-        col=1,
-    )
-    figure.add_trace(
-        go.Bar(
-            x=labels,
-            y=shares,
-            marker_color="#dc2626",
-            text=[f"{share:.2%}" for share in shares],
-            textposition="outside",
-            name="Share",
-        ),
-        row=1,
-        col=2,
-    )
-    figure.update_yaxes(title_text="Spins", row=1, col=1)
+    colors = ["#2563eb", "#dc2626", "#059669"]
+    for reel_index, reel in enumerate(reels):
+        counts = [reel.count(symbol) for symbol in symbols]
+        shares = [count / len(reel) for count in counts]
+        name = f"Reel {reel_index + 1}"
+        figure.add_trace(
+            go.Bar(
+                x=labels,
+                y=counts,
+                marker_color=colors[reel_index % len(colors)],
+                text=[str(count) for count in counts],
+                textposition="inside",
+                name=name,
+                legendgroup=name,
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Bar(
+                x=labels,
+                y=shares,
+                marker_color=colors[reel_index % len(colors)],
+                text=[f"{share:.1%}" for share in shares],
+                textposition="inside",
+                name=name,
+                legendgroup=name,
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+    figure.update_yaxes(title_text="Count", row=1, col=1)
     figure.update_yaxes(
         title_text="Share",
         tickformat=".0%",
-        row=1,
-        col=2,
+        row=2,
+        col=1,
     )
     figure.update_layout(
         title=(
-            f"{best_solution['algorithm']} – Symbol Winning Distribution "
+            f"{best_solution['algorithm']} - Reel Symbol Distribution "
             f"(Generation {best_solution['generation']})"
         ),
-        height=520,
+        barmode="stack",
+        height=850,
         template="plotly_white",
-        showlegend=False,
     )
+    return figure
+
+
+def add_metric_target_lines(figure, best_solution):
+    """在四個核心 metrics 子圖加入遊戲設計目標線。"""
+    metrics = best_solution["metrics"]
+    reel_length = len(best_solution["reels"][0])
+    symbol_count = len(SYMBOL_MULTIPLIERS)
+    base_count, remainder = divmod(reel_length, symbol_count)
+    minimum_concentration = (
+        remainder * (base_count + 1) ** 2
+        + (symbol_count - remainder) * base_count ** 2
+    ) / reel_length ** 2
+    jackpot_target = 1 / metrics["total_spins"]
+    targets = (
+        (jackpot_target, "Target: at least 1 spin"),
+        (minimum_concentration, "Theoretical minimum"),
+        (0.95, "Target: 95%"),
+        (0.55, "Target: 55%"),
+    )
+    for row, (target, label) in enumerate(targets, start=1):
+        figure.add_hline(
+            y=target,
+            line_dash="dash",
+            line_color="#111827",
+            line_width=1.5,
+            annotation_text=label,
+            annotation_position="top right",
+            row=row,
+            col=1,
+        )
+    figure.update_yaxes(tickformat=".2%", row=1, col=1)
+    figure.update_yaxes(tickformat=".4f", row=2, col=1)
+    figure.update_yaxes(tickformat=".2%", row=3, col=1)
+    figure.update_yaxes(tickformat=".2%", row=4, col=1)
     return figure
 
 
@@ -275,67 +299,51 @@ def save_ga_charts(
     history_path = Path(history_path)
     history = load_ga_history(history_path)
     best_solution = load_best_solution(history_path)
-    fitness_mode, priority = infer_fitness_settings(history)
+    fitness_mode = history[0]["fitness_mode"]
+    algorithm_name = history[0].get("algorithm") or "GA"
     if results_directory is None:
         results_directory = history_path.parent
     results_directory = Path(results_directory)
     results_directory.mkdir(exist_ok=True)
 
-    if history[0].get("primary_fitness") is not None:
-        convergence_series = [("Primary fitness", "primary_fitness")]
-    elif fitness_mode == "weighted":
-        convergence_series = [("Weighted fitness", "weighted_error")]
-    else:
-        label_by_name = {
-            "missing_symbols": "Fitness: missing symbols",
-            "missing_jackpot": "Fitness: missing jackpot",
-            "win_rate": "Fitness: win-rate shortfall",
-            "rtp": "Fitness: RTP error",
-        }
-        history_key_by_name = {
-            "missing_symbols": "missing_symbols",
-            "missing_jackpot": "missing_jackpot",
-            "win_rate": "win_rate_shortfall",
-            "rtp": "rtp_error",
-        }
+    if fitness_mode == "multi-objective":
         convergence_series = [
-            (label_by_name[name], history_key_by_name[name])
-            for name in priority
+            ("Selected weighted score", "weighted_error")
         ]
+    else:
+        convergence_series = [("Primary fitness", "primary_fitness")]
 
     convergence_figure = add_series_figure(
         history,
-        "GA Fitness Convergence",
+        f"{algorithm_name} Fitness Convergence",
         convergence_series,
     )
     metrics_figure = add_series_figure(
         history,
-        "GA Metrics by Generation",
+        f"{algorithm_name} Metrics by Generation",
         [
-            ("Missing jackpot", "missing_jackpot"),
-            ("Jackpot spins", "jackpot_spins"),
             ("Jackpot probability", "jackpot_probability"),
-            ("Missing symbols", "missing_symbols"),
             ("Symbol concentration", "symbol_concentration"),
-            ("Win-rate shortfall", "win_rate_shortfall"),
-            ("RTP error", "rtp_error"),
             ("RTP", "rtp"),
             ("Win rate", "win_rate"),
         ],
     )
+    add_metric_target_lines(metrics_figure, best_solution)
 
     convergence_path = results_directory / "ga_convergence.png"
     metrics_path = results_directory / "ga_metrics.png"
     prize_distribution_path = (
         results_directory / "ga_prize_distribution.png"
     )
-    symbol_winning_path = (
-        results_directory / "ga_symbol_winning_distribution.png"
+    reel_symbol_distribution_path = (
+        results_directory / "ga_reel_symbol_distribution.png"
     )
     prize_distribution_figure = create_prize_distribution_figure(
         best_solution
     )
-    symbol_winning_figure = create_symbol_winning_figure(best_solution)
+    reel_symbol_distribution_figure = (
+        create_reel_symbol_distribution_figure(best_solution)
+    )
     convergence_figure.write_image(
         convergence_path,
         format="png",
@@ -351,8 +359,8 @@ def save_ga_charts(
         format="png",
         scale=2,
     )
-    symbol_winning_figure.write_image(
-        symbol_winning_path,
+    reel_symbol_distribution_figure.write_image(
+        reel_symbol_distribution_path,
         format="png",
         scale=2,
     )
@@ -360,7 +368,7 @@ def save_ga_charts(
         convergence_path,
         metrics_path,
         prize_distribution_path,
-        symbol_winning_path,
+        reel_symbol_distribution_path,
     )
 
 
@@ -382,4 +390,4 @@ if __name__ == "__main__":
     print("收斂圖：", paths[0])
     print("指標變化圖：", paths[1])
     print("獎金分布圖：", paths[2])
-    print("Symbol winning 分布圖：", paths[3])
+    print("Reel symbol 分布圖：", paths[3])

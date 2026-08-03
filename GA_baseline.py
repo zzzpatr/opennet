@@ -34,9 +34,7 @@ def run_ga_baseline():
         fitness_function=baseline_fitness,
         target_reached=baseline_target_reached,
         results_directory=RESULTS_DIRECTORY,
-        fitness_mode="weighted",
-        fitness_priority=("rtp_error", "win_rate_shortfall"),
-        primary_fitness=lambda score, metrics: score[0],
+        fitness_components=("rtp_error", "win_rate_shortfall"),
     )
 
 

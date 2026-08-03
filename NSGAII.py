@@ -5,18 +5,27 @@ from pathlib import Path
 
 from ga_common import (
     GENERATIONS,
-    MIN_WIN_RATE,
     MUTATION_RATE,
     PAIR_MUTATION_RATE,
     POPULATION_SIZE,
-    RTP_TOLERANCE,
+    PRINT_INTERVAL,
+    RANDOM_SEED,
     SWAP_MUTATION_RATE,
     clear_metrics_cache,
     crossover,
-    create_individual,
+    create_evaluation_executor,
     evaluate_metrics,
+    evaluate_population,
     mutate,
-    repair_missing_symbol,
+    save_best_solution,
+    save_history,
+)
+from ga_plot import save_ga_charts
+from GA_weighted_game_design import (
+    BALANCED_INITIALIZATION_RATIO,
+    calculate_objective_penalties,
+    create_initial_population,
+    repair_missing_jackpot,
 )
 from slot_game import (
     calculate_winning_payout_statistics,
@@ -24,71 +33,36 @@ from slot_game import (
 )
 
 
-RANDOM_SEED = 42
-PRINT_INTERVAL = 10
-RTP_SEARCH_SCALE = 0.01
-WIN_RATE_SEARCH_SCALE = 0.10
 RESULTS_DIRECTORY = Path("nsga2_results")
 
 OBJECTIVE_NAMES = (
-    "rtp_error",
-    "symbol_concentration",
+    "rtp_violation_penalty",
+    "win_rate_shortfall_penalty",
+    "missing_jackpot_penalty",
+    "symbol_concentration_penalty",
 )
+ALGORITHM_NAME = "NSGA-II"
+FINAL_SOLUTION_NUMBER = 96
 
 
-def evaluate_reels(reels):
-    """計算 NSGA-II objectives、constraints 與報表指標。"""
-    metrics = evaluate_metrics(reels)
-    constraint_count = (
-        int(metrics["rtp_violation"] > 0)
-        + int(metrics["win_rate_shortfall"] > 0)
-        + metrics["missing_jackpot"]
-        + int(metrics["missing_symbols"] > 0)
-    )
-    constraint_violation = (
-        metrics["rtp_violation"] / RTP_SEARCH_SCALE
-        + metrics["win_rate_shortfall"] / WIN_RATE_SEARCH_SCALE
-        + metrics["jackpot_reel_shortfall"] / 3
-        + metrics["missing_symbols"] / 5
-    )
+def evaluate_reels(reels, metrics=None):
+    """使用與 Weighted GA 相同的四個 penalties 建立 objectives。"""
+    if metrics is None:
+        metrics = evaluate_metrics(reels)
+    objectives = calculate_objective_penalties(metrics)
 
     return {
         "reels": [reel[:] for reel in reels],
         **metrics,
-        "objectives": (
-            metrics["rtp_error"],
-            metrics["symbol_concentration"],
-        ),
-        "constraint_count": constraint_count,
-        "constraint_violation": constraint_violation,
+        "objectives": objectives,
+        "weighted_score": sum(objectives),
         "rank": None,
         "crowding_distance": 0.0,
     }
 
 
 def dominates(individual_a, individual_b):
-    """使用 constraint-domination 判斷 A 是否支配 B。"""
-    violation_a = individual_a["constraint_violation"]
-    violation_b = individual_b["constraint_violation"]
-    feasible_a = individual_a["constraint_count"] == 0
-    feasible_b = individual_b["constraint_count"] == 0
-
-    if feasible_a != feasible_b:
-        return feasible_a
-    if not feasible_a:
-        if not math.isclose(
-            violation_a,
-            violation_b,
-            rel_tol=0,
-            abs_tol=1e-12,
-        ):
-            return violation_a < violation_b
-
-        count_a = individual_a["constraint_count"]
-        count_b = individual_b["constraint_count"]
-        if count_a != count_b:
-            return count_a < count_b
-
+    """以四個 objectives 的標準 Pareto dominance 判斷支配關係。"""
     objectives_a = individual_a["objectives"]
     objectives_b = individual_b["objectives"]
     no_worse = all(
@@ -208,10 +182,10 @@ def tournament_select(population):
     return random.choice((individual_a, individual_b))
 
 
-def create_offspring(population):
+def create_offspring(population, executor=None):
     """使用 tournament、crossover 與 mutation 建立子代。"""
-    offspring = []
-    while len(offspring) < POPULATION_SIZE:
+    offspring_reels = []
+    while len(offspring_reels) < POPULATION_SIZE:
         parent_a = tournament_select(population)
         parent_b = tournament_select(population)
         child_reels = crossover(
@@ -224,9 +198,13 @@ def create_offspring(population):
             pair_rate=PAIR_MUTATION_RATE,
             swap_rate=SWAP_MUTATION_RATE,
         )
-        repair_missing_symbol(child_reels)
-        offspring.append(evaluate_reels(child_reels))
-    return offspring
+        repair_missing_jackpot(child_reels)
+        offspring_reels.append(child_reels)
+    metrics_list = evaluate_population(offspring_reels, executor)
+    return [
+        evaluate_reels(reels, metrics)
+        for reels, metrics in zip(offspring_reels, metrics_list)
+    ]
 
 
 def environmental_selection(combined_population):
@@ -248,34 +226,19 @@ def environmental_selection(combined_population):
 
 
 def select_recommended_solution(pareto_front):
-    """以 objectives 正規化後距離理想點最近者作為推薦解。"""
-    feasible = [
-        individual
-        for individual in pareto_front
-        if individual["constraint_count"] == 0
-    ]
-    candidates = feasible or pareto_front
-    minimums = [
-        min(item["objectives"][index] for item in candidates)
-        for index in range(len(OBJECTIVE_NAMES))
-    ]
-    maximums = [
-        max(item["objectives"][index] for item in candidates)
-        for index in range(len(OBJECTIVE_NAMES))
-    ]
+    """選擇四項總和最低者，供每代 convergence 與摘要使用。"""
+    return min(pareto_front, key=lambda item: item["weighted_score"])
 
-    def ideal_distance(individual):
-        normalized_values = []
-        for index, value in enumerate(individual["objectives"]):
-            span = maximums[index] - minimums[index]
-            normalized_values.append(
-                (value - minimums[index]) / span
-                if span
-                else 0
-            )
-        return math.sqrt(sum(value ** 2 for value in normalized_values))
 
-    return min(candidates, key=ideal_distance)
+def select_final_plot_solution(pareto_front):
+    """選擇指定的 Pareto solution 產生最終輸出與分布圖。"""
+    solution_index = FINAL_SOLUTION_NUMBER - 1
+    if not 0 <= solution_index < len(pareto_front):
+        raise ValueError(
+            f"Pareto front 沒有 solution {FINAL_SOLUTION_NUMBER}；"
+            f"目前只有 {len(pareto_front)} 個 solutions。"
+        )
+    return pareto_front[solution_index]
 
 
 def save_pareto_front(pareto_front):
@@ -284,20 +247,12 @@ def save_pareto_front(pareto_front):
     output_path = RESULTS_DIRECTORY / "nsga2_pareto_front.csv"
     fieldnames = [
         "solution",
-        "feasible",
-        "constraint_count",
-        "constraint_violation",
+        "weighted_score",
+        *OBJECTIVE_NAMES,
         "rtp",
-        "rtp_error",
         "win_rate",
-        "win_rate_shortfall",
         "symbol_concentration",
-        "missing_symbols",
-        "missing_jackpot",
-        "jackpot_reel_shortfall",
-        "jackpot_spins",
         "jackpot_probability",
-        "symbol_winning_spins",
         "reel_1",
         "reel_2",
         "reel_3",
@@ -308,32 +263,16 @@ def save_pareto_front(pareto_front):
         for solution_index, individual in enumerate(pareto_front, start=1):
             writer.writerow({
                 "solution": solution_index,
-                "feasible": individual["constraint_count"] == 0,
-                "constraint_count": individual["constraint_count"],
-                "constraint_violation": individual[
-                    "constraint_violation"
-                ],
+                "weighted_score": individual["weighted_score"],
+                **dict(zip(OBJECTIVE_NAMES, individual["objectives"])),
                 "rtp": individual["rtp"],
-                "rtp_error": individual["rtp_error"],
                 "win_rate": individual["win_rate"],
-                "win_rate_shortfall": individual[
-                    "win_rate_shortfall"
-                ],
                 "symbol_concentration": individual[
                     "symbol_concentration"
                 ],
-                "missing_symbols": individual["missing_symbols"],
-                "missing_jackpot": individual["missing_jackpot"],
-                "jackpot_reel_shortfall": individual[
-                    "jackpot_reel_shortfall"
-                ],
-                "jackpot_spins": individual["jackpot_spins"],
                 "jackpot_probability": individual[
                     "jackpot_probability"
                 ],
-                "symbol_winning_spins": repr(
-                    individual["symbol_winning_spins"]
-                ),
                 "reel_1": repr(individual["reels"][0]),
                 "reel_2": repr(individual["reels"][1]),
                 "reel_3": repr(individual["reels"][2]),
@@ -343,18 +282,11 @@ def save_pareto_front(pareto_front):
 
 def print_generation_summary(generation, pareto_front):
     """輸出當代 Pareto front 與推薦解摘要。"""
-    feasible_count = sum(
-        individual["constraint_count"] == 0
-        for individual in pareto_front
-    )
     recommended = select_recommended_solution(pareto_front)
     print(
         f"Generation {generation:3d} | "
         f"Pareto solutions={len(pareto_front)} | "
-        f"feasible={feasible_count} | "
-        f"constraint count={recommended['constraint_count']} | "
-        f"violation={recommended['constraint_violation']:.6f} | "
-        f"missing symbols={recommended['missing_symbols']} | "
+        f"weighted score={recommended['weighted_score']:.6f} | "
         f"RTP={recommended['rtp']:.4%} | "
         f"win rate={recommended['win_rate']:.4%} | "
         f"concentration={recommended['symbol_concentration']:.6f} | "
@@ -362,40 +294,80 @@ def print_generation_summary(generation, pareto_front):
     )
 
 
+def create_history_row(generation, recommended):
+    """建立與普通 GA 圖表格式相容的每代推薦解紀錄。"""
+    return {
+        "generation": generation,
+        "algorithm": ALGORITHM_NAME,
+        "fitness_mode": "multi-objective",
+        "primary_fitness": recommended["weighted_score"],
+        "weighted_error": recommended["weighted_score"],
+        "missing_jackpot": recommended["missing_jackpot"],
+        "jackpot_spins": recommended["jackpot_spins"],
+        "jackpot_probability": recommended["jackpot_probability"],
+        "symbol_concentration": recommended["symbol_concentration"],
+        "win_rate_shortfall": recommended["win_rate_shortfall"],
+        "rtp_error": recommended["rtp_error"],
+        "rtp": recommended["rtp"],
+        "win_rate": recommended["win_rate"],
+    }
+
+
 def run_nsga2():
+    """建立一次共用 executor，再執行 NSGA-II。"""
+    with create_evaluation_executor() as executor:
+        return _run_nsga2(executor)
+
+
+def _run_nsga2(executor):
     """執行 NSGA-II，回傳 Pareto front 與推薦解。"""
     random.seed(RANDOM_SEED)
     clear_metrics_cache()
+    initial_reels = create_initial_population()
+    initial_metrics = evaluate_population(initial_reels, executor)
     population = [
-        evaluate_reels(create_individual())
-        for _ in range(POPULATION_SIZE)
+        evaluate_reels(reels, metrics)
+        for reels, metrics in zip(initial_reels, initial_metrics)
     ]
+    history = []
+    print(
+        "Initial population: "
+        f"balanced={BALANCED_INITIALIZATION_RATIO:.0%}, "
+        f"random={1 - BALANCED_INITIALIZATION_RATIO:.0%}"
+    )
     fronts = rank_and_assign_crowding(population)
 
     for generation in range(1, GENERATIONS + 1):
-        offspring = create_offspring(population)
+        offspring = create_offspring(population, executor)
         population = environmental_selection(population + offspring)
         fronts = rank_and_assign_crowding(population)
         pareto_front = fronts[0]
+        recommended = select_recommended_solution(pareto_front)
+        history.append(create_history_row(generation, recommended))
+        history_path = save_history(history, RESULTS_DIRECTORY)
 
         if generation == 1 or generation % PRINT_INTERVAL == 0:
             print_generation_summary(generation, pareto_front)
 
     pareto_front = fronts[0]
     output_path = save_pareto_front(pareto_front)
-    recommended = select_recommended_solution(pareto_front)
+    recommended = select_final_plot_solution(pareto_front)
 
     print(f"\nPareto front：{output_path}")
     print(f"Pareto solutions：{len(pareto_front)}")
-    recommended_is_feasible = (
-        recommended["constraint_count"] == 0
-    )
-    print(f"Recommended solution feasible: {recommended_is_feasible}")
-    if not recommended_is_feasible:
-        print(
-            "警告：本次搜尋沒有找到同時符合 Win rate 與 Jackpot "
-            "硬條件的解，請增加 generations、population 或更換 seed。"
+    print(f"Selected Pareto solution: {FINAL_SOLUTION_NUMBER}")
+    print("Hard constraints: disabled")
+    print(f"Weighted score: {recommended['weighted_score']:.6f}")
+    print(
+        "Objective penalties: "
+        + ", ".join(
+            f"{name}={value:.6f}"
+            for name, value in zip(
+                OBJECTIVE_NAMES,
+                recommended["objectives"],
+            )
         )
+    )
     print("\nRecommended reels:")
     for reel in recommended["reels"]:
         print(reel)
@@ -406,22 +378,30 @@ def run_nsga2():
         f"{recommended['symbol_concentration']:.6f}"
     )
     print(
-        "Symbol winning spins: "
-        + ", ".join(
-            f"{symbol}={winning_spins}"
-            for symbol, winning_spins in enumerate(
-                recommended["symbol_winning_spins"]
-            )
-        )
-    )
-    print(
         f"Jackpot: {recommended['jackpot_spins']} spins "
         f"({recommended['jackpot_probability']:.6%})"
     )
     payout_statistics = calculate_winning_payout_statistics(
         recommended["reels"]
     )
+    recommended_metrics = evaluate_metrics(recommended["reels"])
+    best_solution_path = save_best_solution(
+        algorithm_name=ALGORITHM_NAME,
+        generation=generation,
+        reels=recommended["reels"],
+        metrics=recommended_metrics,
+        score=(recommended["weighted_score"],),
+        payout_statistics=payout_statistics,
+        results_directory=RESULTS_DIRECTORY,
+    )
+    chart_paths = save_ga_charts(history_path, RESULTS_DIRECTORY)
     print_winning_payout_statistics(payout_statistics)
+    print(f"History: {history_path}")
+    print(f"Recommended solution: {best_solution_path}")
+    print(f"Convergence chart: {chart_paths[0]}")
+    print(f"Metrics chart: {chart_paths[1]}")
+    print(f"Prize distribution chart: {chart_paths[2]}")
+    print(f"Reel symbol distribution chart: {chart_paths[3]}")
     return pareto_front, recommended
 
 

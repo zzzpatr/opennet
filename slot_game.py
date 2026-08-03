@@ -309,11 +309,6 @@ def print_winning_payout_statistics(payout_statistics):
     )
 
 
-def calculate_rtp_and_win_rate(reels=REELS):
-    """保留原有五個回傳值，供既有程式相容使用。"""
-    return calculate_game_statistics(reels)[:5]
-
-
 if __name__ == "__main__":
     simulation_spins = 10
     simulation_wins = 0
